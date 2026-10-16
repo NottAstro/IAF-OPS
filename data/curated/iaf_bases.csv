@@ -1,0 +1,76 @@
+ident,icao,iata,name,lat,lon,elevation_m,command,wing,base_type,role_tags,size_class,source_url,verify
+VIAX,VIAX,AIP,Air Force Station Adampur,31.4338,75.758797,236.2,WAC,8 Wing,AIR_FORCE_STATION,FIGHTER,L,https://en.wikipedia.org/wiki/Adampur_Air_Force_Base,1
+VIAM,VIAM,,Air Force Station Ambala,30.368099,76.816704,277.1,WAC,7 Wing,AIR_FORCE_STATION,FIGHTER,L,https://en.wikipedia.org/wiki/Halwara_Air_Force_Base,1
+VIAR,VIAR,ATQ,Air Force Station Amritsar,31.7096,74.797302,230.4,WAC,1 FBSU,FBSU,FIGHTER,S,https://en.wikipedia.org/wiki/Sri_Guru_Ram_Dass_Jee_International_Airport,1
+VIAW,VIAW,,Air Force Station Awantipur,33.876598,74.9757,1643.8,WAC,8 FBSU,FBSU,FIGHTER,M,https://en.wikipedia.org/wiki/Awantipur_Air_Force_Station,1
+VIBT,VIBT,BUP,Air Force Station Bathinda,30.2701,74.755798,201.8,WAC,34 Wing,AIR_FORCE_STATION,"FIGHTER,AEW,UAV",M,https://en.wikipedia.org/wiki/Bathinda_Airport,1
+VICG,VICG,IXC,Air Force Station Chandigarh,30.6735,76.788498,308.5,WAC,12 Wing,AIR_FORCE_STATION,"TRANSPORT,HELO",L,https://en.wikipedia.org/wiki/Chandigarh_Airport,1
+VIHX,VIHX,HWR,Air Force Station Halwara,30.748501,75.629799,240.8,WAC,9 Wing,AIR_FORCE_STATION,FIGHTER,L,https://en.wikipedia.org/wiki/Ludhiana_Halwara_International_Airport,1
+VIDX,VIDX,HDO,Air Force Station Hindon,28.707701,77.358902,213.4,WAC,28 Wing,AIR_FORCE_STATION,"TRANSPORT,HELO",L,https://en.wikipedia.org/wiki/Hindon_Airport,1
+VIJU,VIJU,IXJ,Air Force Station Jammu,32.688849,74.838152,303.6,WAC,23 Wing,JOINT_USE,HELO,M,https://en.wikipedia.org/wiki/Jammu_Airport,1
+VILH,VILH,IXL,Air Force Station Leh,34.135899,77.546501,3255.9,WAC,21 Wing,JOINT_USE,"HELO,TRANSPORT,FIGHTER",M,https://en.wikipedia.org/wiki/Leh_Kushok_Bakula_Rimpochee_Airport,1
+VI57,VI57,,Air Force Station Thoise,34.652599,77.375801,3062.0,WAC,,FBSU,"TRANSPORT,HELO",S,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+VIDP,VIDP,DEL,Air Force Station Palam,28.55563,77.09519,236.8,WAC,3 Wing,AIR_FORCE_STATION,TRANSPORT,L,https://en.wikipedia.org/wiki/Indira_Gandhi_International_Airport,1
+VIPK,VIPK,IXP,Air Force Station Pathankot,32.233611,75.634444,310.0,WAC,18 Wing,AIR_FORCE_STATION,"HELO,FIGHTER",M,https://en.wikipedia.org/wiki/Pathankot_Airport,1
+VISP,VISP,SWN,Air Force Station Sarsawa,29.994303,77.42456,271.6,WAC,30 Wing,AIR_FORCE_STATION,HELO,M,https://en.wikipedia.org/wiki/Sarsawa_Air_Force_Station,1
+VISA,VISA,,Air Force Station Sirsa,29.5606,75.006104,198.1,WAC,45 Wing,AIR_FORCE_STATION,FIGHTER,M,https://en.wikipedia.org/wiki/Sirsa_Air_Force_Station,1
+VISR,VISR,SXR,Air Force Station Srinagar,33.987099,74.7742,1654.8,WAC,1 Wing,AIR_FORCE_STATION,"FIGHTER,HELO",M,https://en.wikipedia.org/wiki/Srinagar_Airport,1
+VIUX,VIUX,,Air Force Station Udhampur,32.902152,75.155709,629.7,WAC,39 Wing,HELIBASE,HELO,S,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+VABJ,VABJ,BHJ,Air Force Station Bhuj,23.2877998352,69.6701965332,81.7,SWAC,27 Wing,AIR_FORCE_STATION,FIGHTER,M,https://en.wikipedia.org/wiki/Bhuj_Airport,1
+VADS,VADS,,Air Force Station Deesa,24.2679,72.204399,147.8,SWAC,52 Wing,AIR_FORCE_STATION,FIGHTER,M,https://en.wikipedia.org/wiki/Deesa_Airport,1
+VIJR,VIJR,JSA,Air Force Station Jaisalmer,26.8887,70.864998,228.9,SWAC,41 Wing,AIR_FORCE_STATION,"FIGHTER,UAV",M,https://en.wikipedia.org/wiki/Jaisalmer_Airport,1
+VAJM,VAJM,JGA,Air Force Station Jamnagar,22.465499877929688,70.01260375976562,21.0,SWAC,33 Wing,AIR_FORCE_STATION,FIGHTER,L,https://en.wikipedia.org/wiki/Jamnagar_Airport,1
+VIJO,VIJO,JDH,Air Force Station Jodhpur,26.251100540161133,73.04889678955078,218.5,SWAC,32 Wing,AIR_FORCE_STATION,"FIGHTER,HELO",L,https://en.wikipedia.org/wiki/Jodhpur_Airport,1
+VAPO,VAPO,PNQ,Air Force Station Lohegaon (Pune),18.5821,73.919701,591.9,SWAC,2 Wing,AIR_FORCE_STATION,FIGHTER,L,https://en.wikipedia.org/wiki/Pune_Airport,1
+VIBK,VIBK,BKB,Air Force Station Nal (Bikaner),28.070601,73.207199,228.6,SWAC,46 Wing,AIR_FORCE_STATION,FIGHTER,M,https://en.wikipedia.org/wiki/Bikaner_Airport,1
+VA1K,VANY,,Air Force Station Naliya,23.2223,68.891296,41.1,SWAC,49 Wing,AIR_FORCE_STATION,FIGHTER,M,https://en.wikipedia.org/wiki/Naliya_Air_Force_Station,1
+VIPX,VIPX,,Air Force Station Phalodi,27.104866,72.212894,,SWAC,35 Wing,AIR_FORCE_STATION,HELO,M,https://en.wikipedia.org/wiki/Phalodi_Air_Force_Station,1
+VI43,VI43,,Air Force Station Suratgarh,29.387800216674805,73.90390014648438,168.9,SWAC,,AIR_FORCE_STATION,HELO,S,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+VIUT,VIUT,,Air Force Station Uttarlai,25.813,71.4823,152.4,SWAC,5 FBSU,FBSU,FIGHTER,M,https://en.wikipedia.org/wiki/Uttarlai_Air_Force_Station,1
+VABO,VABO,BDQ,Air Force Station Vadodara,22.336201,73.226303,39.3,SWAC,36 Wing,AIR_FORCE_STATION,TRANSPORT,M,https://en.wikipedia.org/wiki/Vadodara_Airport,1
+VIAG,VIAG,AGR,Air Force Station Agra,27.157975,77.961025,167.9,CAC,4 Wing,AIR_FORCE_STATION,"TRANSPORT,AEW,TANKER",L,https://en.wikipedia.org/wiki/Agra_Airport,1
+VIBL,VIBL,,Air Force Station Bakshi Ka Talab,26.9883,80.893097,117.3,CAC,,AIR_FORCE_STATION,TRANSPORT,S,https://en.wikipedia.org/wiki/Lucknow_Air_Force_Station,1
+VIAL,VEAB,IXD,Air Force Station Bamrauli (Prayagraj),25.4401,81.733902,98.1,CAC,29 Wing,AIR_FORCE_STATION,"TRANSPORT,HELO",M,https://en.wikipedia.org/wiki/Prayagraj_Airport,1
+VIBY,VIBY,BEK,Air Force Station Bareilly,28.4221,79.450798,176.8,CAC,15 Wing,AIR_FORCE_STATION,"FIGHTER,HELO",L,https://en.wikipedia.org/wiki/Trishul_Air-base,1
+IN-0346,VEBT,,Air Force Station Bihta,25.59124,84.88312,59.1,CAC,,AIR_FORCE_STATION,TRANSPORT,S,https://en.wikipedia.org/wiki/Bihta_Air_Force_Station,1
+VEDH,VEDH,DBR,Air Force Station Darbhanga,26.192801,85.916901,47.5,CAC,,JOINT_USE,TRANSPORT,S,https://en.wikipedia.org/wiki/Darbhanga_Airport,1
+VEGK,VEGK,GOP,Air Force Station Gorakhpur,26.739700317399997,83.4496994019,78.9,CAC,17 Wing,AIR_FORCE_STATION,"FIGHTER,HELO",L,https://en.wikipedia.org/wiki/Gorakhpur_Airport,1
+VIGR,VIGR,GWL,Air Force Station Gwalior,26.29330062866211,78.22779846191406,188.1,CAC,40 Wing,AIR_FORCE_STATION,FIGHTER,L,https://en.wikipedia.org/wiki/Gwalior_Airport,1
+VEBD,VEBD,IXB,Air Force Station Bagdogra,26.6812,88.328598,125.6,EAC,20 Wing,AIR_FORCE_STATION,"HELO,FIGHTER",M,https://en.wikipedia.org/wiki/Bagdogra_Airport,1
+VEPI,VEPI,,Air Force Station Barrackpore,22.7810001373,88.3591995239,5.5,EAC,6 Wing,AIR_FORCE_STATION,HELO,M,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+VECA,VECA,,Air Force Station Chabua,27.4622,95.117699,111.9,EAC,14 Wing,AIR_FORCE_STATION,FIGHTER,M,https://en.wikipedia.org/wiki/Chabua_Air_Force_Station,1
+VEHX,VEHX,,Air Force Station Hasimara,26.698299,89.369102,103.6,EAC,16 Wing,AIR_FORCE_STATION,FIGHTER,M,https://en.wikipedia.org/wiki/Hasimara_Air_Force_Station,1
+VEJT,VEJT,JRH,Air Force Station Jorhat,26.730456,94.175416,94.8,EAC,10 Wing,AIR_FORCE_STATION,"TRANSPORT,HELO",L,https://en.wikipedia.org/wiki/Jorhat_Airport,1
+VEDX,VEDX,,Air Force Station Kalaikunda,22.3395,87.2145,61.0,EAC,5 Wing,AIR_FORCE_STATION,"FIGHTER,TRAINING",L,https://en.wikipedia.org/wiki/Kalaikunda_Air_Force_Station,1
+VEKU,VEKU,IXS,Air Force Station Kumbhigram,24.9129009247,92.97869873050001,107.3,EAC,22 Wing,JOINT_USE,HELO,S,https://en.wikipedia.org/wiki/Silchar_Airport,1
+VEMN,VEMN,DIB,Air Force Station Mohanbari,27.4839000702,95.0168991089,110.3,EAC,42 Wing,JOINT_USE,HELO,M,https://en.wikipedia.org/wiki/Dibrugarh_Airport,1
+VEPH,VEPH,,Air Force Station Panagarh,23.474300384499998,87.4274978638,73.2,EAC,,AIR_FORCE_STATION,TRANSPORT,L,https://en.wikipedia.org/wiki/Panagarh_Airport,1
+VEPU,VEPU,,Air Force Station Purnea,25.759599685668945,87.41000366210938,39.3,EAC,14 FBSU,FBSU,FIGHTER,S,https://en.wikipedia.org/wiki/Purnea_Airport,1
+VEBI,VEBI,SHL,Air Force Station Shillong (Barapani),25.70359992980957,91.97869873046875,887.0,EAC,,JOINT_USE,TRANSPORT,S,https://en.wikipedia.org/wiki/Shillong_Airport,1
+VETZ,VETZ,TEZ,Air Force Station Tezpur,26.7091007232666,92.78469848632812,73.2,EAC,11 Wing,AIR_FORCE_STATION,FIGHTER,L,https://en.wikipedia.org/wiki/Tezpur_Airport,1
+IN-0002,,,Air Force Station Tawang,27.588732,91.877439,2668.8,EAC,,HELIBASE,HELO,S,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+IN-0019,,,Air Force Station Dinjan,27.544598,95.238011,114.6,EAC,,HELIBASE,HELO,S,https://en.wikipedia.org/wiki/Dinjan_Airfield,1
+VOCX,VOCX,CBD,Air Force Station Car Nicobar,9.153056,92.819273,1.5,SAC,37 Wing,AIR_FORCE_STATION,"FIGHTER,TRANSPORT",M,https://en.wikipedia.org/wiki/Car_Nicobar_Air_Force_Base,1
+VOSX,VOSX,,Air Force Station Sulur,11.0136,77.159698,381.0,SAC,43 Wing,AIR_FORCE_STATION,"FIGHTER,TRANSPORT,HELO",L,https://en.wikipedia.org/wiki/Sulur_Air_Force_Station,1
+VOTX,VOTX,,Air Force Station Tambaram,12.9072,80.121902,27.4,SAC,,TRAINING_ESTABLISHMENT,TRAINING,S,https://en.wikipedia.org/wiki/Tambaram_Air_Force_Station,1
+VOTJ,VOTJ,TJV,Air Force Station Thanjavur,10.723835,79.109457,77.1,SAC,47 Wing,AIR_FORCE_STATION,FIGHTER,M,https://en.wikipedia.org/wiki/Thanjavur_Air_Force_Station,1
+VOTV,VOTV,TRV,Air Force Station Thiruvananthapuram,8.481889,76.920029,4.6,SAC,,JOINT_USE,TRANSPORT,S,https://en.wikipedia.org/wiki/Trivandrum_International_Airport,1
+VOHY,VOHY,BPM,Air Force Station Begumpet,17.4531,78.467598,531.0,TC,,TRAINING_ESTABLISHMENT,TRAINING,M,https://en.wikipedia.org/wiki/Begumpet_Airport,1
+VOBR,VOBR,IXX,Air Force Station Bidar,17.9081,77.487099,663.9,TC,,TRAINING_ESTABLISHMENT,TRAINING,L,https://en.wikipedia.org/wiki/Bidar_Airport,1
+VODG,VODG,,Air Force Academy Dundigal,17.627199173,78.4033966064,613.6,TC,,TRAINING_ESTABLISHMENT,TRAINING,L,https://en.wikipedia.org/wiki/Dundigul_Air_Force_Academy,1
+VOHK,VOHK,,Air Force Station Hakimpet,17.553499,78.524902,615.7,TC,,TRAINING_ESTABLISHMENT,"TRAINING,HELO",M,https://en.wikipedia.org/wiki/Helicopter_Training_School,1
+VOYK,VOYK,,Air Force Station Yelahanka,13.135499954223633,77.60600280761719,928.1,TC,,TRAINING_ESTABLISHMENT,"TRAINING,TRANSPORT",M,https://en.wikipedia.org/wiki/Yelahanka_Air_Force_Station,1
+VANP,VANP,NAG,Air Force Station Nagpur (Sonegaon),21.092199,79.047203,314.9,MC,44 Wing,AIR_FORCE_STATION,MAINT,M,https://en.wikipedia.org/wiki/Dr._Babasaheb_Ambedkar_International_Airport,1
+VAOZ,VAOZ,ISK,11 Base Repair Depot Ojhar,20.119101,73.912903,579.1,MC,,BASE_REPAIR_DEPOT,MAINT,M,https://en.wikipedia.org/wiki/Nashik_Airport,1
+VICX,VECX,KNU,Air Force Station Kanpur (Chakeri),26.404301,80.410103,125.0,MC,,BASE_REPAIR_DEPOT,MAINT,M,https://en.wikipedia.org/wiki/Kanpur_Airport,1
+IN-0003,,,Daulat Beg Oldi ALG,35.396467,77.928965,4937.8,WAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/Daulat_Beg_Oldi_Advanced_Landing_Ground,1
+IN-0302,,,Nyoma ALG,33.16913,78.72971,4141.9,WAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+VI66,VI66,,Fukche ALG,32.937401,79.213203,4175.8,WAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+VI65,VI65,,Kargil ALG,34.5243,76.155899,2927.3,WAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/Kargil_Airport,1
+VE67,VE67,,Mechuka ALG,28.602458,94.126139,2407.9,EAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+VE91,VE91,,Vijaynagar ALG,27.1935997009,97.00370025630001,1270.1,EAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+IN-0010,,,Walong ALG,28.12967300415,97.019660949707,,EAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/Walong,1
+IN-0307,VETU,,Tuting ALG,28.98876,94.89863,476.1,EAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/Tuting_Advanced_Landing_Ground,1
+VEPG,VEPG,IXT,Pasighat ALG,28.064786,95.336952,145.4,EAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/Pasighat_Airport,1
+VEAN,VEAN,IXV,Along ALG,28.17530059814453,94.802001953125,274.3,EAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/Along_Airport,1
+VEZO,VEZO,ZER,Ziro ALG,27.588301,93.828102,1646.8,EAC,,ALG,ALG,S,https://en.wikipedia.org/wiki/Zero_Airport,1

@@ -1,0 +1,12 @@
+name,category,max_range_km,max_alt_m
+S-400 Triumf (Sudarshan Chakra),LR_SAM,380,30000
+MR-SAM (Barak-8),MR_SAM,70,16000
+Akash-NG,MR_SAM,70,20000
+Akash,SR_SAM,25,18000
+SPYDER-MR,SR_SAM,35,16000
+SPYDER-SR,SR_SAM,15,9000
+S-125 Pechora (upgraded),SR_SAM,25,18000
+Igla-S,VSHORADS,6,3500
+L/70 40 mm AD gun,AD_GUN,4,3000
+ZU-23-2 twin 23 mm,AD_GUN,2.5,1500
+Counter-drone system (generic),C_UAS,3,1000

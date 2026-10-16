@@ -1,0 +1,8 @@
+{
+  "name": "iaf-airops-wind",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node server.mjs" },
+  "dependencies": { "@meri-imperiumi/eccodes-wasm": "2.48.2" },
+  "engines": { "node": ">=24" }
+}

@@ -1,0 +1,17 @@
+.env
+.venv/
+__pycache__/
+*.pyc
+node_modules/
+frontend/dist/
+data/raw/
+data/cache/
+.pytest_cache/
+.ruff_cache/
+.DS_Store
+*.log
+
+# local tool output
+.gstack/
+data/logs/
+.vite/

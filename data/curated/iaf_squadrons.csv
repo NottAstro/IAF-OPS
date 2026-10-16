@@ -1,0 +1,75 @@
+number,name,aircraft_type,home_base_ident,source_url,verify
+1 Sqn,Tigers,Mirage 2000,VIGR,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+7 Sqn,Battle Axes,Mirage 2000,VIGR,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+9 Sqn,Wolfpack,Mirage 2000,VIGR,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+5 Sqn,Tuskers,Jaguar,VIAM,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+14 Sqn,Bulls,Jaguar,VIAM,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+16 Sqn,Black Cobras,Jaguar,VEGK,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+27 Sqn,Flaming Arrows,Jaguar,VEGK,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+6 Sqn,Dragons,Jaguar,VAJM,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+224 Sqn,Warlords,Jaguar,VAJM,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+17 Sqn,Golden Arrows,Rafale,VIAM,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+101 Sqn,Falcons,Rafale,VEHX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+28 Sqn,First Supersonics,MiG-29,VIAX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+47 Sqn,Black Archers,MiG-29,VIAX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+223 Sqn,Tridents,MiG-29,VIAX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+2 Sqn,Winged Arrows,Su-30MKI,VETZ,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+106 Sqn,Lynxes,Su-30MKI,VETZ,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+8 Sqn,Eight Pursoots,Su-30MKI,VIBY,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+24 Sqn,Hunting Hawks,Su-30MKI,VIBY,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+15 Sqn,Flying Lancers,Su-30MKI,VISA,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+20 Sqn,Lightnings,Su-30MKI,VAPO,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+30 Sqn,Rhinos,Su-30MKI,VAPO,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+31 Sqn,Lions,Su-30MKI,VIJO,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+102 Sqn,Trisonics,Su-30MKI,VECA,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+220 Sqn,Desert Tigers,Su-30MKI,VIHX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+221 Sqn,Valiants,Su-30MKI,VIHX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+222 Sqn,Tigersharks,Su-30MKI,VOTJ,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+4 Sqn,Oorials,Su-30MKI,VIUT,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+45 Sqn,Flying Daggers,Tejas Mk1,VOSX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+18 Sqn,Flying Bullets,Tejas Mk1,VA1K,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+81 Sqn,Skylords,C-17A,VIDX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+77 Sqn,Veiled Vipers,C-130J-30,VIDX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+87 Sqn,Ironsides,C-130J-30,VEPH,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+44 Sqn,Mighty Jets,Il-76MD,VICG,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+78 Sqn,Mighty Monsters,Il-78MKI,VIAG,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+50 Sqn,Heavyweights,A-50EI,VIAG,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+Netra Flight,,Netra EMB-145I,VIBT,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+11 Sqn,Rhinos,C-295W,VABO,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+12 Sqn,Yaks,An-32,VIAG,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+25 Sqn,Himalayan Eagles,An-32,VICG,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+48 Sqn,Camels,An-32,VICG,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+33 Sqn,Caribous,An-32,VOSX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+43 Sqn,Ibexes,An-32,VEJT,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+49 Sqn,Paraketes,An-32,VEJT,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+41 Sqn,Otters,Do-228,VIDP,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+125 HS,Gladiators,AH-64E,VIPK,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+137 HS,,AH-64E,VEJT,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+126 HF,Featherweights,CH-47F,VICG,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+143 HU,Dhanush,Prachand LCH,VIJO,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+104 HS,Firebirds,Mi-35,VI43,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+116 HU,,Rudra,VIJO,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+105 HU,Daredevils,Mi-17V-5,VEGK,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+107 HU,,Mi-17V-5,VIJO,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+109 HU,Knights,Mi-17V-5,VOSX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+127 HU,,Mi-17V-5,VEMN,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+128 HU,,Mi-17V-5,VEMN,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+129 HU,,Mi-17V-5,VIDX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+130 HU,Condors,Mi-17V-5,VILH,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+152 HU,,Mi-17V-5,VISP,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+153 HU,,Mi-17V-5,VIJU,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+154 HU,,Mi-17V-5,VISR,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+156 HU,,Mi-17V-5,VEBD,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+157 HU,,Mi-17V-5,VEPI,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+111 HU,,Dhruv,VIBY,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+117 HU,,Dhruv,VISP,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+114 HU,Siachen Pioneers,Cheetah/Chetak,VILH,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+131 HF,,Cheetah/Chetak,VIDX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+132 HF,,Cheetah/Chetak,VIUX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+AFA Basic Flying,,PC-7 Mk II,VODG,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+AFA Kiran Flight,,Kiran,VODG,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+FTW Hakimpet,,Kiran,VOHK,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+HTS Hakimpet,,Cheetah/Chetak,VOHK,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+Hawk Training Bidar,,Hawk 132,VOBR,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+Hawk Training Kalaikunda,,Hawk 132,VEDX,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1
+TTW Yelahanka,,Do-228,VOYK,https://en.wikipedia.org/wiki/List_of_Indian_Air_Force_stations,1

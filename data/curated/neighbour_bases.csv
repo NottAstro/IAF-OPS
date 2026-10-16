@@ -1,0 +1,44 @@
+ident,icao,name,country_iso3,operator,lat,lon,elevation_m,public_notes,source_url,verify
+OPMR,OPMR,PAF Base Masroor (Karachi),PAK,PAF,24.893600463867188,66.93879699707031,10.7,PAF Base Masroor (Karachi),https://en.wikipedia.org/wiki/Masroor_Airbase,1
+OPSF,OPSF,PAF Base Faisal (Karachi),PAK,PAF,24.87420082092285,67.11849975585938,8.8,PAF Base Faisal (Karachi),https://en.wikipedia.org/wiki/Faisal_Airbase,1
+OPSR,OPSR,PAF Base Mushaf (Sargodha),PAK,PAF,32.04859924316406,72.66500091552734,187.1,PAF Base Mushaf (Sargodha),https://en.wikipedia.org/wiki/Mushaf_Airbase,1
+OPMI,OPMI,PAF Base M.M. Alam (Mianwali),PAK,PAF,32.5630989074707,71.5707015991211,210.3,PAF Base M.M. Alam (Mianwali),https://en.wikipedia.org/wiki/Dhamial_Army_Airbase,1
+OPMS,OPMS,PAF Base Minhas (Kamra),PAK,PAF,33.8690986633,72.4009017944,311.8,PAF Base Minhas (Kamra),https://en.wikipedia.org/wiki/Minhas_Airbase,1
+OPRN,OPRN,PAF Base Nur Khan (Rawalpindi),PAK,PAF,33.616699,73.099197,508.4,PAF Base Nur Khan (Rawalpindi),https://en.wikipedia.org/wiki/PAF_Base_Nur_Khan,1
+OPRQ,OPRQ,PAF Base Rafiqui (Shorkot),PAK,PAF,30.758100509643555,72.28250122070312,150.0,PAF Base Rafiqui (Shorkot),https://en.wikipedia.org/wiki/Rafiqui_Airbase,1
+OPRS,OPRS,PAF Base Risalpur,PAK,PAF,34.08110046386719,71.97260284423828,320.0,PAF Base Risalpur,https://en.wikipedia.org/wiki/Risalpur_Airbase,1
+OPJA,OPJA,PAF Base Shahbaz (Jacobabad),PAK,PAF,28.28420066833496,68.44969940185547,56.4,PAF Base Shahbaz (Jacobabad),https://en.wikipedia.org/wiki/Jacobabad_Airbase,1
+PK-0009,,PAF Base Murid,PAK,PAF,32.909616,72.773895,164.6,PAF Base Murid,https://en.wikipedia.org/wiki/Murid_Airbase,1
+PK-0049,,PAF Base Samungli / Khalid (Quetta),PAK,PAF,30.2376,67.03685,1727.9,PAF Base Samungli / Khalid (Quetta),https://ourairports.com/airports/PK-0049,1
+PK-0070,,PAF Base Bholari,PAK,PAF,25.243824,68.037052,,PAF Base Bholari,https://en.wikipedia.org/wiki/PAF_Base_Bholari,1
+OPMK,OPMK,Mirpur Khas air base,PAK,PAF,25.682501,69.0728,54.9,Mirpur Khas air base,https://ourairports.com/airports/OPMK,1
+OP24,,Mandi Bahauddin air base,PAK,PAF,32.60139846801758,73.5083999633789,228.6,Mandi Bahauddin air base,https://ourairports.com/airports/OP24,1
+ZWSH,ZWSH,Kashgar (joint use),CHN,PLAAF,39.542273,76.02023,1380.4,Kashgar (joint use),https://en.wikipedia.org/wiki/Kashgar_Laining_International_Airport,1
+ZWTN,ZWTN,Hotan (joint use),CHN,PLAAF,37.03850173950195,79.86489868164062,1424.0,Hotan (joint use),https://en.wikipedia.org/wiki/Hotan_Airport,1
+ZUAL,ZUAL,Ngari Gunsa (joint use),CHN,PLAAF,32.09794,80.053971,4273.9,Ngari Gunsa (joint use),https://en.wikipedia.org/wiki/Ngari_Gunsa_Airport,1
+CN-0354,ZUPL,Ali Burang / Pulan (joint use),CHN,PLAAF,30.397898,81.13317,4249.8,Ali Burang / Pulan (joint use),https://en.wikipedia.org/wiki/Ali_Pulan_Airport,1
+ZULS,ZULS,Lhasa Gonggar (joint use),CHN,PLAAF,29.298001,90.911951,3570.1,Lhasa Gonggar (joint use),https://en.wikipedia.org/wiki/Lhasa_Gonggar_Airport,1
+ZURK,ZURK,Shigatse Peace (joint use),CHN,PLAAF,29.350876,89.299157,3782.0,Shigatse Peace (joint use),https://en.wikipedia.org/wiki/Shigatse_Peace_Airport,1
+CN-0236,ZUDR,Shigatse Tingri (joint use),CHN,PLAAF,28.604567,86.798,4300.1,Shigatse Tingri (joint use),https://en.wikipedia.org/wiki/Shigatse_Tingri_Airport,1
+ZUNZ,ZUNZ,Nyingchi Mainling (joint use),CHN,PLAAF,29.303301,94.335297,2948.9,Nyingchi Mainling (joint use),https://en.wikipedia.org/wiki/Nyingchi_Airport,1
+ZUBD,ZUBD,Qamdo Bangda (joint use),CHN,PLAAF,30.553600311279297,97.1082992553711,4334.0,Qamdo Bangda (joint use),https://en.wikipedia.org/wiki/Bangda_Airport,1
+CN-0033,,Damxung air base,CHN,PLAAF,30.486273,91.082561,4299.2,Damxung air base,https://ourairports.com/airports/CN-0033,1
+ZUSH,ZUSH,Shannan Longzi (joint use),CHN,PLAAF,28.422422,92.348082,3949.9,Shannan Longzi (joint use),https://en.wikipedia.org/wiki/Shannan_Longzi_Airport,1
+CN-0237,ZWTK,Tashkurgan (joint use),CHN,PLAAF,37.661333,75.288877,3200.1,Tashkurgan (joint use),https://en.wikipedia.org/wiki/Tashkurgan_Airport,1
+CN-0049,,Xiangyun Midu air base,CHN,PLAAF,25.445299,100.735001,,Xiangyun Midu air base,https://ourairports.com/airports/CN-0049,1
+VQPR,VQPR,Paro International (no air force),BTN,CIVIL_JOINT,27.4032,89.424599,2244.5,Paro International (no air force),https://en.wikipedia.org/wiki/Paro_Airport,1
+VGHS,VGHS,"BAF Base Bangabandhu (Dhaka, joint use)",BGD,BAF,23.843347,90.397783,9.1,"BAF Base Bangabandhu (Dhaka, joint use)",https://www.linkedin.com/in/md-shamim-islam-109925358/,1
+VGEG,VGEG,"BAF Base Zahurul Haque (Chattogram, joint use)",BGD,BAF,22.249599,91.813301,3.7,"BAF Base Zahurul Haque (Chattogram, joint use)",https://en.wikipedia.org/wiki/Shah_Amanat_International_Airport,1
+VGJR,VGJR,BAF Base Matiur Rahman (Jessore),BGD,BAF,23.1838,89.160797,6.1,BAF Base Matiur Rahman (Jessore),https://en.wikipedia.org/wiki/Jessore_Airport,1
+VGSD,VGSD,Saidpur (joint use),BGD,BAF,25.759199,88.908897,38.1,Saidpur (joint use),https://en.wikipedia.org/wiki/Saidpur_Airport,1
+VNKT,VNKT,Tribhuvan International (Nepal Army Air Service),NPL,NA_AVN,27.6966,85.3591,1338.1,Tribhuvan International (Nepal Army Air Service),https://en.wikipedia.org/wiki/Tribhuvan_International_Airport,1
+VCCH,VCCH,SLAF Hingurakgoda,LKA,SLAF,8.04981,80.9814,51.8,SLAF Hingurakgoda,https://en.wikipedia.org/wiki/Hingurakgoda_Airport,1
+VCCN,VCCN,SLAF Katukurunda,LKA,SLAF,6.55212020874,79.9775009155,3.0,SLAF Katukurunda,https://en.wikipedia.org/wiki/Katukurunda_Airport,1
+VCCT,VCCT,SLAF China Bay,LKA,SLAF,8.539159,81.18128,1.8,SLAF China Bay,https://en.wikipedia.org/wiki/China_Bay_Airport,1
+VCCJ,VCCJ,SLAF Palaly / Jaffna (joint use),LKA,SLAF,9.79233,80.070099,10.1,SLAF Palaly / Jaffna (joint use),https://en.wikipedia.org/wiki/Jaffna_International_Airport,1
+VYML,VYML,Meiktila air base,MMR,MAF,20.88640022277832,95.89279174804688,213.1,Meiktila air base,https://ourairports.com/airports/VYML,1
+VYST,VYST,Shante air base,MMR,MAF,20.941699981689453,95.91449737548828,192.0,Shante air base,https://ourairports.com/airports/VYST,1
+VYNP,VYNP,Namsang / Nampong air base,MMR,MAF,25.354400634799998,97.2951965332,139.9,Namsang / Nampong air base,https://en.wikipedia.org/wiki/Nampong_Air_Force_Base,1
+VYMK,VYMK,Myitkyina (joint use),MMR,MAF,25.3836,97.351898,144.8,Myitkyina (joint use),https://en.wikipedia.org/wiki/Myitkyina_Airport,1
+OAIX,OAIX,Bagram airfield,AFG,AAF,34.946098,69.264999,1492.0,Bagram airfield,https://en.wikipedia.org/wiki/Bagram_Airfield,1
+OASD,OASD,Shindand air base,AFG,AAF,33.3913,62.261002,1150.0,Shindand air base,https://en.wikipedia.org/wiki/Shindand_Air_Base,1

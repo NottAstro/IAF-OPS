@@ -1,0 +1,13 @@
+ident,icao,name,operator,lat,lon,elevation_m,public_notes,source_url,verify
+VOGO,VOGO,INS Hansa (Goa),IN,15.380062,73.833328,45.7,Indian Navy air station (joint use with Dabolim),https://en.wikipedia.org/wiki/Dabolim_Airport,1
+VOAR,VOAR,INS Rajali (Arakkonam),IN,13.0712,79.6912,80.8,Indian Navy air station,https://en.wikipedia.org/wiki/Arakkonam_Naval_Air_Station,1
+VEVZ,VOVZ,INS Dega (Visakhapatnam),IN,17.723506,83.227729,4.6,Indian Navy air station (joint use),https://en.wikipedia.org/wiki/Visakhapatnam_Airport,1
+VOCC,VOCC,INS Garuda (Kochi),IN,9.946064,76.271947,2.4,Indian Navy air station,https://en.wikipedia.org/wiki/INS_Garuda,1
+VORM,VORM,INS Parundu (Ramanathapuram),IN,9.32509,78.971497,4.9,Indian Navy air station,https://en.wikipedia.org/wiki/INS_Parundu,1
+VO94,VOBX,INS Baaz (Campbell Bay),IN,7.01304,93.922798,4.9,Indian Navy air station,https://ourairports.com/airports/VO94,1
+IN-0053,VODX,INS Kohassa (Shibpur),IN,13.236316,93.049731,4.0,Indian Navy air station,https://en.wikipedia.org/wiki/INS_Kohassa,1
+VOPB,VOPB,INS Utkrosh (Port Blair),IN,11.640194,92.72902,4.0,Indian Navy air station (joint use),https://en.wikipedia.org/wiki/Veer_Savarkar_International_Airport,1
+IN-0021,,INS Shikra (Mumbai),IN,18.913345681200003,72.8292113543,,Indian Navy helibase,https://ourairports.com/airports/IN-0021,1
+IN-0382,VANR,Army Aviation Gandhinagar (Nashik),IA_AVN,19.963699,73.807602,597.1,Army Aviation (combat army aviation training school area),https://en.wikipedia.org/wiki/Gandhinagar_Airport,1
+VADN,VADN,Coast Guard Air Station Daman,ICG,20.434401,72.843201,10.1,Indian Coast Guard air station,https://en.wikipedia.org/wiki/Daman_Airport,1
+VAPR,VAPR,Coast Guard Air Enclave Porbandar,ICG,21.649524,69.656405,7.0,Indian Coast Guard air enclave (joint use),https://en.wikipedia.org/wiki/Porbandar_Airport,1

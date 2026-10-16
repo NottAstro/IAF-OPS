@@ -1,0 +1,600 @@
+"""Single schema source. Mirrors docs/DATA_MODEL.md §3 — change both together."""
+from datetime import date, datetime
+
+from geoalchemy2 import Geometry
+from sqlalchemy import (
+    ARRAY, BigInteger, Boolean, Date, DateTime, Enum, Float, ForeignKey, Integer, SmallInteger, String, Text,
+    UniqueConstraint, func,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
+
+
+def E(*values: str) -> Enum:
+    """Enum stored as VARCHAR + CHECK (migration friendly)."""
+    return Enum(*values, native_enum=False, create_constraint=True, length=40, validate_strings=True)
+
+
+SOURCE = E("PUBLIC", "SYNTHETIC", "LIVE")
+STATUS_SITE = E("OPERATIONAL", "DEGRADED", "MAINTENANCE", "OFFLINE")
+MISSION_TYPES = ("TRAINING", "AIR_DEFENCE_PATROL", "QRA_SCRAMBLE", "INTERCEPT", "STRIKE_EXERCISE", "CAS_EXERCISE",
+                 "RECCE_ISR", "AIRLIFT", "PARA_DROP", "CASEVAC", "HADR", "AAR_SUPPORT", "AEW_SUPPORT", "FERRY",
+                 "FUNCTIONAL_CHECK", "SAR")
+AIRCRAFT_STATUS = ("AVAILABLE", "STANDBY", "QRA", "AIRBORNE", "TURNAROUND", "MAINT_SCHEDULED",
+                   "MAINT_UNSCHEDULED", "AOG", "DEPOT", "RETIRED")
+DUTY_STATUS = ("ON_DUTY", "STANDBY", "QRA", "BRIEFED", "AIRBORNE", "CREW_REST", "OFF_DUTY", "LEAVE", "SICK", "COURSE")
+SORTIE_STATUS = ("PLANNED", "CREWED", "READY", "AIRBORNE", "ON_STATION", "RTB", "LANDED", "COMPLETED",
+                 "CANCELLED", "ABORTED")
+ACTIVE_SORTIE = ("CREWED", "READY", "AIRBORNE", "ON_STATION", "RTB")
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+class Common:
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    version: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    source: Mapped[str] = mapped_column(SOURCE, default="SYNTHETIC", server_default="SYNTHETIC", nullable=False)
+    source_ref: Mapped[str | None] = mapped_column(Text)
+
+
+def fk(table: str, nullable: bool = False, index: bool = True):
+    return mapped_column(BigInteger, ForeignKey(f"{table}.id"), nullable=nullable, index=index)
+
+
+# ---------------------------------------------------------------- A. organisation & geography
+class Command(Common, Base):
+    __tablename__ = "command"
+    code: Mapped[str] = mapped_column(E("WAC", "SWAC", "CAC", "EAC", "SAC", "TC", "MC"), unique=True)
+    name: Mapped[str] = mapped_column(Text)
+    hq_name: Mapped[str] = mapped_column(Text)
+    hq_geom = mapped_column(Geometry("POINT", srid=4326))
+    is_operational: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class AirBase(Common, Base):
+    __tablename__ = "base"
+    code: Mapped[str] = mapped_column(String(16), unique=True)
+    iata: Mapped[str | None] = mapped_column(String(4))
+    name: Mapped[str] = mapped_column(Text)
+    alt_names: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    country_iso3: Mapped[str] = mapped_column(String(3))
+    side: Mapped[str] = mapped_column(E("OWN", "OTHER_INDIAN_MIL", "FOREIGN"), index=True)
+    operator: Mapped[str] = mapped_column(E("IAF", "IN", "IA_AVN", "ICG", "PAF", "PLAAF", "PLANAF", "BAF", "SLAF",
+                                            "MAF", "NA_AVN", "AAF", "CIVIL_JOINT", "OTHER"))
+    base_type: Mapped[str] = mapped_column(E("AIR_FORCE_STATION", "FBSU", "ALG", "JOINT_USE",
+                                             "TRAINING_ESTABLISHMENT", "BASE_REPAIR_DEPOT", "HELIBASE", "LOGISTICS",
+                                             "RADAR_STATION", "FOREIGN_MILITARY", "FOREIGN_JOINT_USE",
+                                             "OTHER_INDIAN_MIL"))
+    command_id: Mapped[int | None] = fk("command", nullable=True)
+    wing: Mapped[str | None] = mapped_column(Text)
+    role_tags: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    geom = mapped_column(Geometry("POINT", srid=4326), nullable=False)
+    elevation_m: Mapped[float | None] = mapped_column(Float)
+    ops_status: Mapped[str] = mapped_column(E("OPERATIONAL", "LIMITED", "CLOSED"), default="OPERATIONAL")
+    affiliation: Mapped[str] = mapped_column(E("FRIEND", "HOSTILE", "NEUTRAL"), default="FRIEND")
+    public_notes: Mapped[str | None] = mapped_column(Text)
+    wikipedia_url: Mapped[str | None] = mapped_column(Text)
+    ourairports_id: Mapped[str | None] = mapped_column(Text)
+    metar_station: Mapped[str | None] = mapped_column(String(4))  # nearest METAR (own or ≤50 km)
+    metar_station_km: Mapped[float | None] = mapped_column(Float)
+
+
+class Runway(Common, Base):
+    __tablename__ = "runway"
+    base_id: Mapped[int] = fk("base")
+    designator: Mapped[str] = mapped_column(Text)
+    length_m: Mapped[float | None] = mapped_column(Float)
+    width_m: Mapped[float | None] = mapped_column(Float)
+    surface: Mapped[str] = mapped_column(E("ASPHALT", "CONCRETE", "GRAVEL", "GRASS", "MATTING", "UNKNOWN"),
+                                         default="UNKNOWN")
+    heading_true_deg: Mapped[float | None] = mapped_column(Float)
+    lighted: Mapped[bool | None] = mapped_column(Boolean)
+    geom = mapped_column(Geometry("LINESTRING", srid=4326))
+    status: Mapped[str] = mapped_column(E("OPEN", "RESTRICTED", "CLOSED", "UNDER_REPAIR"), default="OPEN")
+
+
+class ParkingFacility(Common, Base):
+    __tablename__ = "parking_facility"
+    base_id: Mapped[int] = fk("base")
+    kind: Mapped[str] = mapped_column(E("HAS", "BLAST_PEN", "OPEN_APRON", "MAINT_HANGAR", "TRANSPORT_APRON",
+                                        "HELIPAD", "UAV_HANGAR"))
+    slot_size: Mapped[str] = mapped_column(E("S", "M", "L", "XL"))
+    slots_total: Mapped[int] = mapped_column(Integer)
+    slots_unserviceable: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class QraPosture(Common, Base):
+    __tablename__ = "qra_posture"
+    base_id: Mapped[int] = fk("base")
+    aircraft_type_id: Mapped[int] = fk("aircraft_type")
+    required_aircraft: Mapped[int] = mapped_column(Integer, default=2)
+    readiness_min: Mapped[int] = mapped_column(Integer, default=5)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+# ---------------------------------------------------------------- B. fleet
+class AircraftType(Common, Base):
+    __tablename__ = "aircraft_type"
+    icao_type: Mapped[str] = mapped_column(String(8))
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    variant: Mapped[str | None] = mapped_column(Text)
+    manufacturer: Mapped[str | None] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(E("FIXED_WING", "ROTARY_WING", "UAV_FIXED_WING", "UAV_ROTARY_SMALL"))
+    role: Mapped[str] = mapped_column(E(
+        "FIGHTER_MULTIROLE", "AIR_SUPERIORITY", "STRIKE", "TRAINER_BASIC", "TRAINER_INTERMEDIATE",
+        "TRAINER_ADVANCED", "TRANSPORT_STRATEGIC", "TRANSPORT_TACTICAL", "TRANSPORT_LIGHT", "VIP_TRANSPORT",
+        "TANKER", "AEW_C", "ISR", "UTILITY_HELO", "ATTACK_HELO", "HEAVY_LIFT_HELO", "LIGHT_HELO", "UAV_MALE",
+        "UAV_TACTICAL", "SMALL_UAS"))
+    seats_pilot: Mapped[int] = mapped_column(Integer, default=1)
+    seats_other: Mapped[int] = mapped_column(Integer, default=0)
+    max_fuel_kg: Mapped[float] = mapped_column(Float)
+    burn_kg_per_h: Mapped[float] = mapped_column(Float)
+    cruise_kt: Mapped[float] = mapped_column(Float)
+    endurance_h: Mapped[float] = mapped_column(Float)
+    combat_radius_km: Mapped[float | None] = mapped_column(Float)
+    slot_size: Mapped[str] = mapped_column(E("S", "M", "L", "XL"))
+    maint_interval_h: Mapped[int] = mapped_column(Integer, default=100)
+    turnaround_min: Mapped[int] = mapped_column(Integer, default=40)
+    serial_prefix: Mapped[str] = mapped_column(String(4))
+    sidc_function: Mapped[str | None] = mapped_column(String(10))
+    in_service: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class Squadron(Common, Base):
+    __tablename__ = "squadron"
+    number: Mapped[str] = mapped_column(Text, unique=True)
+    name: Mapped[str | None] = mapped_column(Text)
+    role: Mapped[str | None] = mapped_column(Text)
+    aircraft_type_id: Mapped[int] = fk("aircraft_type")
+    home_base_id: Mapped[int] = fk("base")
+    wing: Mapped[str | None] = mapped_column(Text)
+    unit_establishment: Mapped[int] = mapped_column(Integer)
+
+
+class Aircraft(Common, Base):
+    __tablename__ = "aircraft"
+    tail_no: Mapped[str] = mapped_column(String(16), unique=True)
+    aircraft_type_id: Mapped[int] = fk("aircraft_type")
+    squadron_id: Mapped[int] = fk("squadron")
+    home_base_id: Mapped[int] = fk("base")
+    current_base_id: Mapped[int | None] = fk("base", nullable=True)
+    status: Mapped[str] = mapped_column(E(*AIRCRAFT_STATUS), index=True)
+    status_reason: Mapped[str | None] = mapped_column(Text)
+    readiness_min: Mapped[int | None] = mapped_column(Integer)
+    airframe_hours: Mapped[float] = mapped_column(Float, default=0)
+    hours_since_maint: Mapped[float] = mapped_column(Float, default=0)
+    next_maint_due_hours: Mapped[float] = mapped_column(Float, default=100)
+    next_maint_due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    maint_eta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fuel_kg: Mapped[float] = mapped_column(Float, default=0)
+    induction_year: Mapped[int | None] = mapped_column(Integer)
+    last_sortie_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# ---------------------------------------------------------------- C. people
+class Aircrew(Common, Base):
+    __tablename__ = "aircrew"
+    service_no: Mapped[str] = mapped_column(String(24), unique=True)
+    rank: Mapped[str] = mapped_column(E("FG_OFFR", "FLT_LT", "SQN_LDR", "WG_CDR", "GP_CAPT", "AIR_CMDE"))
+    first_name: Mapped[str] = mapped_column(Text)
+    last_name: Mapped[str] = mapped_column(Text)
+    callsign: Mapped[str | None] = mapped_column(Text)
+    date_of_birth: Mapped[date] = mapped_column(Date)
+    commission_date: Mapped[date] = mapped_column(Date)
+    aircrew_role: Mapped[str] = mapped_column(E("PILOT", "WSO", "NAVIGATOR", "FLIGHT_ENGINEER", "LOADMASTER",
+                                                "FLIGHT_GUNNER", "RPA_PILOT", "PAYLOAD_OPERATOR"))
+    stream: Mapped[str] = mapped_column(E("FIGHTER", "TRANSPORT", "HELICOPTER", "RPA"))
+    squadron_id: Mapped[int | None] = fk("squadron", nullable=True)
+    base_id: Mapped[int] = fk("base")
+    appointment: Mapped[str | None] = mapped_column(Text)
+    ops_category: Mapped[str] = mapped_column(E("UNDER_CONVERSION", "SEMI_OPERATIONAL", "FULLY_OPERATIONAL",
+                                                "FLIGHT_LEAD", "INSTRUCTOR"))
+    instrument_rating: Mapped[str] = mapped_column(E("WHITE", "GREEN", "MASTER_GREEN"))
+    medical_status: Mapped[str] = mapped_column(E("FIT_FULL", "FIT_RESTRICTED", "TEMP_UNFIT", "GROUNDED"))
+    medical_valid_until: Mapped[date] = mapped_column(Date)
+    duty_status: Mapped[str] = mapped_column(E(*DUTY_STATUS), index=True)
+    rest_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    total_hours: Mapped[float] = mapped_column(Float, default=0)
+    night_hours: Mapped[float] = mapped_column(Float, default=0)
+    instrument_hours: Mapped[float] = mapped_column(Float, default=0)
+
+
+class AircrewTypeHours(Common, Base):
+    __tablename__ = "aircrew_type_hours"
+    __table_args__ = (UniqueConstraint("aircrew_id", "aircraft_type_id"),)
+    aircrew_id: Mapped[int] = fk("aircrew")
+    aircraft_type_id: Mapped[int] = fk("aircraft_type")
+    hours: Mapped[float] = mapped_column(Float, default=0)
+    captain_hours: Mapped[float] = mapped_column(Float, default=0)
+    night_hours: Mapped[float] = mapped_column(Float, default=0)
+    instrument_hours: Mapped[float] = mapped_column(Float, default=0)
+    last_flown_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AircrewQualification(Common, Base):
+    __tablename__ = "aircrew_qualification"
+    aircrew_id: Mapped[int] = fk("aircrew")
+    code: Mapped[str] = mapped_column(E("QFI", "NIGHT", "NVG", "AAR_RECEIVER", "FORMATION_LEAD_2",
+                                        "FORMATION_LEAD_4", "LOW_LEVEL", "MOUNTAIN_FLYING", "SAR", "PARA_DROP",
+                                        "TEST_PILOT", "QRA_CLEARED"))
+    aircraft_type_id: Mapped[int | None] = fk("aircraft_type", nullable=True)
+    awarded_on: Mapped[date] = mapped_column(Date)
+    expires_on: Mapped[date | None] = mapped_column(Date)
+
+
+class AircrewPosting(Common, Base):
+    __tablename__ = "aircrew_posting"
+    aircrew_id: Mapped[int] = fk("aircrew")
+    squadron_id: Mapped[int | None] = fk("squadron", nullable=True)
+    base_id: Mapped[int | None] = fk("base", nullable=True)
+    aircraft_type_id: Mapped[int | None] = fk("aircraft_type", nullable=True)
+    appointment: Mapped[str | None] = mapped_column(Text)
+    from_date: Mapped[date] = mapped_column(Date)
+    to_date: Mapped[date | None] = mapped_column(Date)
+
+
+class GroundCrewStrength(Common, Base):
+    __tablename__ = "ground_crew_strength"
+    base_id: Mapped[int] = fk("base")
+    trade: Mapped[str] = mapped_column(E("AIRFRAME", "ENGINE", "AVIONICS", "ELECTRICAL", "ARMAMENT", "POL", "ATC",
+                                         "MET", "MT", "FIRE_CRASH_RESCUE", "STORES", "MEDICAL", "SECURITY",
+                                         "RADAR_TECH", "COMMS_TECH"))
+    shift: Mapped[str] = mapped_column(E("A", "B", "C"))
+    authorised: Mapped[int] = mapped_column(Integer)
+    held: Mapped[int] = mapped_column(Integer)
+    on_duty: Mapped[int] = mapped_column(Integer, default=0)
+    standby: Mapped[int] = mapped_column(Integer, default=0)
+    on_leave: Mapped[int] = mapped_column(Integer, default=0)
+
+
+class DutyRosterEntry(Common, Base):
+    __tablename__ = "duty_roster_entry"
+    aircrew_id: Mapped[int] = fk("aircrew")
+    base_id: Mapped[int] = fk("base")
+    duty_type: Mapped[str] = mapped_column(E("FLYING", "STANDBY", "QRA", "OPS_DUTY", "REST", "LEAVE", "COURSE"))
+    start_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    end_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    readiness_min: Mapped[int | None] = mapped_column(Integer)
+
+
+# ---------------------------------------------------------------- D. operations
+class Mission(Common, Base):
+    __tablename__ = "mission"
+    code: Mapped[str] = mapped_column(String(24), unique=True)
+    name: Mapped[str] = mapped_column(Text)
+    mission_type: Mapped[str] = mapped_column(E(*MISSION_TYPES))
+    priority: Mapped[str] = mapped_column(E("P1", "P2", "P3", "P4"))
+    window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    area_geom = mapped_column(Geometry("POLYGON", srid=4326))
+    status: Mapped[str] = mapped_column(E("REQUESTED", "APPROVED", "ACTIVE", "COMPLETED", "CANCELLED"))
+    requesting_command_id: Mapped[int | None] = fk("command", nullable=True)
+
+
+class Sortie(Common, Base):
+    __tablename__ = "sortie"
+    code: Mapped[str] = mapped_column(String(32), unique=True)
+    mission_id: Mapped[int | None] = fk("mission", nullable=True)
+    origin: Mapped[str] = mapped_column(E("SIM_PROGRAMME", "HUMAN", "QRA_SCRAMBLE"))
+    mission_type: Mapped[str] = mapped_column(E(*MISSION_TYPES))
+    priority: Mapped[str] = mapped_column(E("P1", "P2", "P3", "P4"))
+    departure_base_id: Mapped[int] = fk("base")
+    recovery_base_id: Mapped[int] = fk("base")
+    status: Mapped[str] = mapped_column(E(*SORTIE_STATUS), index=True)
+    planned_launch_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    actual_launch_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    planned_recovery_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    actual_recovery_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cancel_reason: Mapped[str | None] = mapped_column(E("WX", "AIRCRAFT_US", "CREW_UNAVAILABLE", "FUEL",
+                                                        "TASKING_CHANGE", "USER_CANCELLED", "OTHER"))
+    route_geom = mapped_column(Geometry("LINESTRING", srid=4326))
+    orbit_geom = mapped_column(Geometry("POLYGON", srid=4326))
+    cruise_alt_m: Mapped[float] = mapped_column(Float, default=6000)
+    fuel_planned_kg: Mapped[float] = mapped_column(Float, default=0)
+    fuel_used_kg: Mapped[float] = mapped_column(Float, default=0)
+    target_track_id: Mapped[str | None] = mapped_column(Text)
+
+
+class SortieAircraft(Common, Base):
+    __tablename__ = "sortie_aircraft"
+    sortie_id: Mapped[int] = fk("sortie")
+    aircraft_id: Mapped[int] = fk("aircraft")
+    callsign: Mapped[str] = mapped_column(Text)
+    formation_pos: Mapped[int] = mapped_column(Integer, default=1)
+
+
+class SortieCrew(Common, Base):
+    __tablename__ = "sortie_crew"
+    sortie_id: Mapped[int] = fk("sortie")
+    aircrew_id: Mapped[int] = fk("aircrew")
+    aircraft_id: Mapped[int] = fk("aircraft")
+    position: Mapped[str] = mapped_column(E("CAPTAIN", "CO_PILOT", "WSO", "NAVIGATOR", "FLIGHT_ENGINEER",
+                                            "LOADMASTER", "FLIGHT_GUNNER", "RPA_PILOT", "PAYLOAD_OPERATOR",
+                                            "INSTRUCTOR", "STUDENT"))
+    hours_logged: Mapped[float] = mapped_column(Float, default=0)
+    night_hours: Mapped[float] = mapped_column(Float, default=0)
+
+
+# ---------------------------------------------------------------- E. logistics
+class FuelStorage(Common, Base):
+    __tablename__ = "fuel_storage"
+    base_id: Mapped[int] = fk("base")
+    grade: Mapped[str] = mapped_column(E("ATF", "AVGAS", "DIESEL_HSD", "MOGAS"))
+    kind: Mapped[str] = mapped_column(E("BULK_UNDERGROUND", "ABOVE_GROUND", "BLADDER"))
+    capacity_l: Mapped[float] = mapped_column(Float)
+    current_l: Mapped[float] = mapped_column(Float)
+    reserve_l: Mapped[float] = mapped_column(Float)
+    reorder_l: Mapped[float] = mapped_column(Float)
+    tank_count: Mapped[int] = mapped_column(Integer, default=4)
+    replenish_eta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class FuelTransaction(Common, Base):
+    __tablename__ = "fuel_transaction"
+    fuel_storage_id: Mapped[int] = fk("fuel_storage")
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    kind: Mapped[str] = mapped_column(E("RECEIPT", "ISSUE_AIRCRAFT", "ISSUE_VEHICLE", "DEFUEL", "TRANSFER_IN",
+                                        "TRANSFER_OUT", "ADJUSTMENT"))
+    quantity_l: Mapped[float] = mapped_column(Float)
+    balance_after_l: Mapped[float] = mapped_column(Float)
+    aircraft_id: Mapped[int | None] = fk("aircraft", nullable=True)
+    sortie_id: Mapped[int | None] = fk("sortie", nullable=True)
+    actor: Mapped[str] = mapped_column(Text, default="SIMULATOR")
+
+
+class GroundAsset(Common, Base):
+    __tablename__ = "ground_asset"
+    base_id: Mapped[int] = fk("base")
+    asset_class: Mapped[str] = mapped_column(E("VEHICLE", "GSE"))
+    asset_type: Mapped[str] = mapped_column(Text)
+    reg_or_serial: Mapped[str] = mapped_column(String(24), unique=True)
+    status: Mapped[str] = mapped_column(E("SERVICEABLE", "UNSERVICEABLE", "UNDER_REPAIR"))
+    capacity_l: Mapped[float | None] = mapped_column(Float)
+    last_service_date: Mapped[date | None] = mapped_column(Date)
+
+
+class Warehouse(Common, Base):
+    __tablename__ = "warehouse"
+    base_id: Mapped[int] = fk("base")
+    name: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(E("GENERAL", "AVIATION_SPARES", "POL_PACKED", "ARMAMENT_STORE", "MEDICAL",
+                                        "RATIONS"))
+    capacity_m3: Mapped[float] = mapped_column(Float)
+    utilisation_pct: Mapped[float] = mapped_column(Float)
+    status: Mapped[str] = mapped_column(E("OPERATIONAL", "DEGRADED", "CLOSED"), default="OPERATIONAL")
+
+
+STOCK_CATEGORIES = ("ENGINE_SPARES", "AIRFRAME_SPARES", "AVIONICS_SPARES", "TYRES_BRAKES", "CONSUMABLES",
+                    "POL_PACKED", "GSE_SPARES", "MEDICAL", "RATIONS", "ARMAMENT_AAM_BVR", "ARMAMENT_AAM_WVR",
+                    "ARMAMENT_PGM", "ARMAMENT_BOMB_UNGUIDED", "ARMAMENT_ROCKET", "ARMAMENT_GUN_AMMO",
+                    "ARMAMENT_CHAFF_FLARE")
+
+
+class StockItem(Common, Base):
+    __tablename__ = "stock_item"
+    part_no: Mapped[str] = mapped_column(String(24), unique=True)
+    nomenclature: Mapped[str] = mapped_column(Text)
+    category: Mapped[str] = mapped_column(E(*STOCK_CATEGORIES))
+    unit: Mapped[str] = mapped_column(E("EA", "L", "KG", "ROUNDS"))
+    aircraft_type_id: Mapped[int | None] = fk("aircraft_type", nullable=True)
+
+
+class StockLevel(Common, Base):
+    __tablename__ = "stock_level"
+    warehouse_id: Mapped[int] = fk("warehouse")
+    stock_item_id: Mapped[int] = fk("stock_item")
+    qty_on_hand: Mapped[float] = mapped_column(Float)
+    qty_reserved: Mapped[float] = mapped_column(Float, default=0)
+    reorder_level: Mapped[float] = mapped_column(Float)
+    max_level: Mapped[float] = mapped_column(Float)
+    last_receipt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+# ---------------------------------------------------------------- F. defence & comms
+class AdSystemType(Common, Base):
+    __tablename__ = "ad_system_type"
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    category: Mapped[str] = mapped_column(E("LR_SAM", "MR_SAM", "SR_SAM", "VSHORADS", "AD_GUN", "C_UAS"))
+    max_range_km: Mapped[float] = mapped_column(Float)
+    max_alt_m: Mapped[float | None] = mapped_column(Float)
+
+
+class AirDefenceBattery(Common, Base):
+    __tablename__ = "air_defence_battery"
+    code: Mapped[str] = mapped_column(String(24), unique=True)
+    ad_system_type_id: Mapped[int] = fk("ad_system_type")
+    protected_base_id: Mapped[int | None] = fk("base", nullable=True)
+    command_id: Mapped[int | None] = fk("command", nullable=True)
+    geom = mapped_column(Geometry("POINT", srid=4326), nullable=False)
+    status: Mapped[str] = mapped_column(STATUS_SITE, default="OPERATIONAL")
+    readiness_min: Mapped[int] = mapped_column(Integer, default=10)
+    launchers_total: Mapped[int] = mapped_column(Integer)
+    launchers_ready: Mapped[int] = mapped_column(Integer)
+    repair_eta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class RadarType(Common, Base):
+    __tablename__ = "radar_type"
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    category: Mapped[str] = mapped_column(E("LONG_RANGE", "MEDIUM_POWER", "LOW_LEVEL_TRANSPORTABLE",
+                                            "LOW_LEVEL_LIGHTWEIGHT", "AEROSTAT", "ATC_SURVEILLANCE"))
+    max_range_km: Mapped[float] = mapped_column(Float)
+
+
+class RadarSite(Common, Base):
+    __tablename__ = "radar_site"
+    code: Mapped[str] = mapped_column(String(24), unique=True)
+    radar_type_id: Mapped[int] = fk("radar_type")
+    base_id: Mapped[int | None] = fk("base", nullable=True)
+    geom = mapped_column(Geometry("POINT", srid=4326), nullable=False)
+    antenna_height_m: Mapped[float] = mapped_column(Float, default=10)
+    status: Mapped[str] = mapped_column(STATUS_SITE, default="OPERATIONAL")
+    repair_eta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CommsNode(Common, Base):
+    __tablename__ = "comms_node"
+    code: Mapped[str] = mapped_column(String(24), unique=True)
+    node_type: Mapped[str] = mapped_column(E("DATALINK_GS", "SATCOM_GS", "HF_STATION", "VUHF_RELAY", "C2_NODE",
+                                             "NETWORK_HUB"))
+    base_id: Mapped[int | None] = fk("base", nullable=True)
+    geom = mapped_column(Geometry("POINT", srid=4326), nullable=False)
+    status: Mapped[str] = mapped_column(E("UP", "DEGRADED", "DOWN"), default="UP")
+    repair_eta: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class CommsLink(Common, Base):
+    __tablename__ = "comms_link"
+    node_a_id: Mapped[int] = fk("comms_node")
+    node_b_id: Mapped[int] = fk("comms_node")
+    medium: Mapped[str] = mapped_column(E("FIBRE", "MICROWAVE", "SATCOM", "HF", "VUHF"))
+    status: Mapped[str] = mapped_column(E("UP", "DEGRADED", "DOWN"), default="UP")
+
+
+# ---------------------------------------------------------------- G. governance
+ROLES = ("ADMIN", "COMMAND_HQ", "BASE_COMMANDER", "VIEWER")
+
+
+class AppUser(Common, Base):
+    __tablename__ = "app_user"
+    username: Mapped[str] = mapped_column(String(64), unique=True)
+    display_name: Mapped[str] = mapped_column(Text)
+    password_hash: Mapped[str] = mapped_column(Text)
+    role: Mapped[str] = mapped_column(E(*ROLES))
+    base_id: Mapped[int | None] = fk("base", nullable=True)
+    command_id: Mapped[int | None] = fk("command", nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    failed_logins: Mapped[int] = mapped_column(Integer, default=0)
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class AuditLog(Base):
+    __tablename__ = "audit_log"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), index=True)
+    request_id: Mapped[str | None] = mapped_column(Text)
+    actor_type: Mapped[str] = mapped_column(E("USER", "SIMULATOR"))
+    actor_user_id: Mapped[int | None] = mapped_column(BigInteger)
+    actor_role: Mapped[str | None] = mapped_column(Text)
+    action: Mapped[str] = mapped_column(E("CREATE", "UPDATE", "DELETE", "RETIRE", "LOGIN", "LOGIN_FAILED",
+                                          "LOGOUT", "ALERT_ACK", "SIM_CONTROL", "USER_ADMIN", "EXPORT",
+                                          "SIM_TRANSITION"))
+    entity_type: Mapped[str | None] = mapped_column(Text, index=True)
+    entity_id: Mapped[int | None] = mapped_column(BigInteger)
+    base_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    before: Mapped[dict | None] = mapped_column(JSONB)
+    after: Mapped[dict | None] = mapped_column(JSONB)
+    ip: Mapped[str | None] = mapped_column(Text)
+
+
+class Alert(Base):
+    __tablename__ = "alert"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    kind: Mapped[str] = mapped_column(E("LOW_FUEL", "FUEL_BELOW_RESERVE", "LOW_SERVICEABILITY", "QRA_SHORTFALL",
+                                        "CREW_FATIGUE", "CREW_SHORTFALL", "MEDICAL_EXPIRY", "CURRENCY_LAPSE",
+                                        "MAINTENANCE_OVERDUE", "STOCK_BELOW_REORDER", "RADAR_DOWN", "AD_DEGRADED",
+                                        "COMMS_DOWN", "WX_BELOW_MINIMA", "FEED_STALE", "UNKNOWN_TRACK"))
+    severity: Mapped[str] = mapped_column(E("INFO", "CAUTION", "WARNING", "CRITICAL"))
+    status: Mapped[str] = mapped_column(E("OPEN", "ACKNOWLEDGED", "CLEARED"), default="OPEN", index=True)
+    entity_type: Mapped[str | None] = mapped_column(Text)
+    entity_id: Mapped[int | None] = mapped_column(BigInteger)
+    base_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    command_id: Mapped[int | None] = mapped_column(BigInteger)
+    message: Mapped[str] = mapped_column(Text)
+    value: Mapped[float | None] = mapped_column(Float)
+    threshold: Mapped[float | None] = mapped_column(Float)
+    raised_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    ack_by: Mapped[int | None] = mapped_column(BigInteger)
+    ack_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    cleared_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    dedup_key: Mapped[str] = mapped_column(Text)
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class KpiSnapshot(Base):
+    __tablename__ = "kpi_snapshot"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    scope: Mapped[str] = mapped_column(E("THEATRE", "COMMAND", "BASE"))
+    scope_id: Mapped[int | None] = mapped_column(BigInteger)
+    metric: Mapped[str] = mapped_column(Text)
+    value: Mapped[float] = mapped_column(Float)
+
+
+class SimState(Base):
+    __tablename__ = "sim_state"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    seed: Mapped[int] = mapped_column(Integer)
+    sim_epoch: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    sim_now: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    tick_no: Mapped[int] = mapped_column(BigInteger, default=0)
+    speed: Mapped[float] = mapped_column(Float, default=10)
+    paused: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_programme_date: Mapped[date | None] = mapped_column(Date)
+
+
+# ---------------------------------------------------------------- H. static GIS (pipeline-owned)
+class GisAdminArea(Base):
+    __tablename__ = "gis_admin_area"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    level: Mapped[str] = mapped_column(E("ADM0", "ADM1", "ADM2"), index=True)
+    country_iso3: Mapped[str] = mapped_column(String(3), index=True)
+    name: Mapped[str | None] = mapped_column(Text)
+    parent_name: Mapped[str | None] = mapped_column(Text)
+    source: Mapped[str] = mapped_column(Text)
+    geom = mapped_column(Geometry("MULTIPOLYGON", srid=4326))
+    geom_lo = mapped_column(Geometry("MULTIPOLYGON", srid=4326))
+    geom_mid = mapped_column(Geometry("MULTIPOLYGON", srid=4326))
+    label_pt = mapped_column(Geometry("POINT", srid=4326))
+
+
+class GisPlace(Base):
+    __tablename__ = "gis_place"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(Text)
+    population: Mapped[int] = mapped_column(Integer, index=True)
+    admin1: Mapped[str | None] = mapped_column(Text)
+    country_code: Mapped[str | None] = mapped_column(String(2))
+    geom = mapped_column(Geometry("POINT", srid=4326))
+
+
+class GisLine(Base):
+    __tablename__ = "gis_line"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    kind: Mapped[str] = mapped_column(E("MOTORWAY", "TRUNK", "PRIMARY", "RAIL"), index=True)
+    name: Mapped[str | None] = mapped_column(Text)
+    ref: Mapped[str | None] = mapped_column(Text)
+    geom = mapped_column(Geometry("LINESTRING", srid=4326))
+    geom_simplified = mapped_column(Geometry("LINESTRING", srid=4326))
+
+
+class GisPoint(Base):
+    __tablename__ = "gis_point"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    kind: Mapped[str] = mapped_column(Text, index=True)
+    osm_id: Mapped[int | None] = mapped_column(BigInteger)
+    name: Mapped[str | None] = mapped_column(Text)
+    operator: Mapped[str | None] = mapped_column(Text)
+    height_m: Mapped[float | None] = mapped_column(Float)
+    rank: Mapped[int | None] = mapped_column(SmallInteger)  # RAIL_STATION importance: 0 major … 2 minor
+    geom = mapped_column(Geometry("POINT", srid=4326))
+
+
+class CivilAirport(Base):
+    __tablename__ = "civil_airport"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ident: Mapped[str] = mapped_column(Text, unique=True)
+    icao: Mapped[str | None] = mapped_column(Text)
+    iata: Mapped[str | None] = mapped_column(Text)
+    name: Mapped[str] = mapped_column(Text)
+    type: Mapped[str] = mapped_column(Text, index=True)
+    country_iso2: Mapped[str] = mapped_column(String(2))
+    elevation_m: Mapped[float | None] = mapped_column(Float)
+    geom = mapped_column(Geometry("POINT", srid=4326))

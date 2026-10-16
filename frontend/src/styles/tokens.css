@@ -1,0 +1,97 @@
+/* Single source of design tokens — navy + neon blue theme (docs/DESIGN_SYSTEM.md §3, revised 2026-10-16).
+   Map style colours are read from here by map/colors.ts. Contrast: text ≥ 4.5:1, controls ≥ 3:1 on all surfaces. */
+:root {
+  --bg: #050b16;
+  --surface-1: #0a1528;
+  --surface-2: #0f1e37;
+  --surface-3: #172a4b;
+  --surface-glass: rgb(8 18 34 / 0.86);
+  --rule: #16294a;
+  --line: #4c7db8;
+  --glow: 0 0 0 1px rgb(31 200 255 / 0.35), 0 0 18px rgb(31 200 255 / 0.18);
+
+  --text-1: #e6f0ff;
+  --text-2: #9db2d3;
+  --text-3: #7088ad;
+
+  --accent: #1fc8ff;          /* neon blue: selection, focus, active controls */
+  --accent-strong: #5ad8ff;
+  --accent-ink: #00131f;
+  --accent-tint: rgb(31 200 255 / 0.14);
+
+  --ok: #34d399;
+  --caution: #facc15;
+  --warning: #fb923c;
+  --critical: #f87171;
+  --info: #7dd3fc;
+  --neutral: #94a3b8;
+
+  --sim: #b79cff;              /* synthetic inventory marker */
+  --sim-ink: #12061f;
+
+  /* map */
+  --map-bg: #050b16;
+  --map-water: #071a33;
+  --map-land: #0a1424;
+  --map-land-2: #0d1a2e;
+  --map-road-major: #1e4f86;
+  --map-road: #173a63;
+  --map-rail: #3b5f8f;
+  --map-runway: #4a77ad;
+  --map-label: #c8d7ee;
+  --map-label-dim: #7f96b8;
+  --map-india-border: #1fc8ff;
+  --map-intl-border: #8fb3e0;
+  --map-admin1: #5c86bd;
+  --map-admin2: #35557f;
+  /* infrastructure view */
+  --map-highway: #8fe3ff;
+  --map-rail-main: #e7c36b;
+  --map-station: #e7c36b;
+  /* air base badges (owner) */
+  --base-iaf: #1fc8ff;
+  --base-other: #9db2d3;
+  --base-hostile: #f87171;
+  --base-neutral: #34d399;
+  /* equipment top views */
+  --bp-fill: #e1e9f2;
+  --bp-fill-2: #c3d2e2;
+  --bp-ink: #1a2c43;
+  --bp-line: rgb(26 44 67 / 0.45);
+  --bp-dark: #5c7697;
+  --bp-disc: rgb(225 233 242 / 0.07);
+  --bp-red: #d64545;
+  /* elevation tint, sea level → 6000 m */
+  --relief-0: #0a1628;
+  --relief-1: #0f2340;
+  --relief-2: #1a3658;
+  --relief-3: #2f5683;
+  --relief-4: #5f83b0;
+  --relief-5: #c8daf2;
+
+  --font-ui: "B612", system-ui, sans-serif;
+  --font-data: "B612 Mono", ui-monospace, monospace;
+
+  --t-display: 29px;
+  --t-h1: 24px;
+  --t-h2: 20px;
+  --t-h3: 17px;
+  --t-body: 14px;
+  --t-small: 12px;
+  --t-micro: 11px;
+  --t-kpi: 34px;
+  --t-data: 13px;
+  --t-hud: 12px;
+
+  --s1: 4px;
+  --s2: 8px;
+  --s3: 12px;
+  --s4: 16px;
+  --s5: 24px;
+  --s6: 32px;
+
+  --topbar-h: 48px;
+  --hud-h: 30px;
+  --rail-w: 288px;
+  --panel-w: 440px;
+}
