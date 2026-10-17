@@ -318,6 +318,7 @@ The full field list, mapped to your element list, is in §8.
 | FR-INV-08 | M | Tables refresh when the WebSocket reports changes. |
 | FR-INV-09 | M | Validation rules: <br>• fuel current ≤ capacity <br>• inventory only at own-side bases <br>• unique tail numbers <br>• aircraft type matches the squadron <br>• no status edit while an aircraft is airborne <br>• the full list is in [DATA_MODEL §6](DATA_MODEL.md#6-integrity-rules-and-invariants) |
 | FR-INV-10 | M | Sortie CRUD for authorised roles. A human-created sortie goes through the same lifecycle as simulator-generated ones, and the simulator flies it (FR-SIM-03). Validation rejects unserviceable aircraft, unavailable crew and routes that come within the border buffer. |
+| FR-INV-11 | S | Inventory → Aircraft opens on one card per aircraft type that has aircraft (picture, total, serviceable, QRA, maintenance, U/S, status bar), honouring the base and command filters. A card opens that type's aircraft table (breadcrumb Inventory › Aircraft › type, back to the cards) with the usual search, filters, CSV export, create, edit, retire and delete. Counts refresh with every aircraft change. |
 
 ### FR-PIL: pilot profiles
 

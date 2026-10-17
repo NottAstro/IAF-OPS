@@ -53,7 +53,7 @@ function Authed({ user }: { user: User }) {
             <Route path="/map" element={<MapScreen user={user} />} />
             <Route path="/overview" element={<Overview />} />
             <Route path="/inventory" element={<Navigate to="/inventory/aircraft" replace />} />
-            <Route path="/inventory/:entity" element={<Inventory user={user} />} />
+            <Route path="/inventory/:entity/:typeId?" element={<Inventory user={user} />} />
             <Route path="/pilots" element={<Pilots user={user} />} />
             <Route path="/pilots/:id" element={<PilotProfile user={user} />} />
             <Route path="/alerts" element={<Alerts />} />

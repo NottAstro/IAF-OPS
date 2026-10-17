@@ -283,13 +283,9 @@ def meta(entity: str, user: dict = Depends(current_user)):
             "has_point": any(c["type"] == "point" for c in columns(e))}
 
 
-@router.get("/{entity}")
-def list_rows(entity: str, request: Request, page: int = 1, page_size: int = 50, sort: str = "id", order: str = "asc",
-              q: str = "", command: str = "", user: dict = Depends(current_user), db: Session = Depends(get_db)):
-    e = ent(entity)
-    m = e.model
-    cols = m.__table__.c
-    stmt = select(m)
+def filtered(e: Entity, stmt, request: Request, q: str, command: str):
+    """The list filters: ?<column>=a,b  ?q= (search columns)  ?command=<code> (bases under that command)."""
+    cols = e.model.__table__.c
     for k, v in request.query_params.items():
         if k in cols and v != "":
             col = cols[k]
@@ -302,6 +298,36 @@ def list_rows(entity: str, request: Request, page: int = 1, page_size: int = 50,
     if command and e.scope:
         stmt = stmt.where(cols[e.scope].in_(
             select(M.AirBase.id).join(M.Command, M.Command.id == M.AirBase.command_id).where(M.Command.code == command)))
+    return stmt
+
+
+# Buckets for the aircraft-type cards. "Serviceable" is the v_aircraft_serviceability definition (QRA is a subset);
+# U/S is unscheduled maintenance + AOG, matching the "U/S" status pill.
+SERVICEABLE = ("AVAILABLE", "STANDBY", "QRA", "AIRBORNE", "TURNAROUND")
+UNSERVICEABLE = ("MAINT_UNSCHEDULED", "AOG")
+
+
+@router.get("/aircraft/by-type")
+def aircraft_by_type(request: Request, command: str = "", user: dict = Depends(current_user), db: Session = Depends(get_db)):
+    """One row per aircraft type that has aircraft (same column / command filters as the list), counted by status."""
+    a, t = M.Aircraft, M.AircraftType
+    n = lambda cond: func.count().filter(cond)  # noqa: E731
+    stmt = (select(t.id, t.name, t.category, t.role, n(a.status != "RETIRED").label("total"),
+                   n(a.status.in_(SERVICEABLE)).label("serviceable"), n(a.status == "QRA").label("qra"),
+                   n(a.status == "MAINT_SCHEDULED").label("maintenance"), n(a.status.in_(UNSERVICEABLE)).label("unserviceable"),
+                   n(a.status == "DEPOT").label("depot"), n(a.status == "RETIRED").label("retired"),
+                   func.count(a.squadron_id.distinct()).label("squadrons"))
+            .join(a, a.aircraft_type_id == t.id).group_by(t.id).order_by(t.name))
+    rows = db.execute(filtered(ENTITIES["aircraft"], stmt, request, "", command)).mappings()
+    return [{**r, "simulated": True} for r in rows]
+
+
+@router.get("/{entity}")
+def list_rows(entity: str, request: Request, page: int = 1, page_size: int = 50, sort: str = "id", order: str = "asc",
+              q: str = "", command: str = "", user: dict = Depends(current_user), db: Session = Depends(get_db)):
+    e = ent(entity)
+    cols = e.model.__table__.c
+    stmt = filtered(e, select(e.model), request, q, command)
     total = db.scalar(select(func.count()).select_from(stmt.subquery()))
     sort_col = cols[sort] if sort in cols else cols["id"]
     stmt = stmt.order_by(sort_col.desc() if order == "desc" else sort_col.asc(), cols["id"].asc())

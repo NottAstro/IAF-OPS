@@ -92,7 +92,17 @@ SELECT (SELECT coalesce(ST_AsMVT(admin.*, 'admin', 4096, 'geom'), '') FROM admin
     || (SELECT coalesce(ST_AsMVT(tower.*, 'tower', 4096, 'geom'), '') FROM tower WHERE geom IS NOT NULL)
     || (SELECT coalesce(ST_AsMVT(airport.*, 'airport', 4096, 'geom'), '') FROM airport WHERE geom IS NOT NULL)
 """
-_tiles: dict[tuple[int, int, int], bytes] = {}  # ponytail: unbounded-but-small in-process cache (static data)
+_tiles: dict[tuple[int, int, int, bool], bytes] = {}  # ponytail: unbounded-but-small in-process cache (static data)
+# gis_line_lo only exists after `make osm`; without it the whole tile query would fail and take the boundaries with it
+NO_LINE_LO = "(SELECT NULL::text AS kind, NULL::text AS ref, NULL::geometry AS geom WHERE false)"
+
+
+def has_line_lo(db: Session) -> bool:
+    return bool(db.execute(text("SELECT to_regclass('gis_line_lo') IS NOT NULL")).scalar())
+
+
+def mvt_sql(has_lo: bool) -> str:
+    return MVT_SQL if has_lo else MVT_SQL.replace("FROM gis_line_lo l", f"FROM {NO_LINE_LO} l")
 
 
 @router.get("/tiles/{z}/{x}/{y}.pbf")
@@ -101,10 +111,10 @@ def tiles(z: int, x: int, y: int, user: dict = Depends(current_user), db: Sessio
     All boundaries and names on the map come from here; the OpenFreeMap basemap supplies only terrain features."""
     if not (0 <= z <= 14 and 0 <= x < 2 ** z and 0 <= y < 2 ** z):
         raise HTTPException(404, "tile out of range")
-    key = (z, x, y)
+    key = (z, x, y, has_line_lo(db))  # tiles cached before `make osm` are rebuilt once the road table appears
     if key not in _tiles:
         w, s, e, n = config.BBOX
-        _tiles[key] = bytes(db.execute(text(MVT_SQL), {"z": z, "x": x, "y": y, "w": w, "s": s, "e": e, "n": n}).scalar() or b"")
+        _tiles[key] = bytes(db.execute(text(mvt_sql(key[3])), {"z": z, "x": x, "y": y, "w": w, "s": s, "e": e, "n": n}).scalar() or b"")
     return Response(_tiles[key], media_type="application/x-protobuf", headers={"Cache-Control": "private, max-age=86400"})
 
 

@@ -1,10 +1,11 @@
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { Base, ColumnMeta, EntityMeta, Page, Row, User } from "../api/types";
 import { ErrorText, Loading, Modal, Pill, Sim } from "../components/ui";
 import { type ArtRef, EquipmentPicture } from "../equipment/Picture";
+import { AircraftTypeCards, AircraftTypeHeader } from "../features/AircraftTypeCards";
 import { istTime, label, num } from "../lib/format";
 
 const ENTITIES: [string, string][] = [
@@ -47,7 +48,9 @@ function cell(c: ColumnMeta, v: unknown, labels?: Record<string, Record<string, 
 }
 
 export function Inventory({ user }: { user: User }) {
-  const { entity = "aircraft" } = useParams();
+  const { entity = "aircraft", typeId: typeParam } = useParams();
+  const typeId = entity === "aircraft" ? typeParam : undefined;
+  const typeCards = entity === "aircraft" && !typeId; // Aircraft opens on one card per type; a card opens that type's table
   const nav = useNavigate();
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
@@ -57,16 +60,21 @@ export function Inventory({ user }: { user: User }) {
   const [baseFilter, setBaseFilter] = useState(user.role === "BASE_COMMANDER" && user.base_id ? String(user.base_id) : "");
   const [statusFilter, setStatusFilter] = useState("");
   const [command, setCommand] = useState("");
+  const [typeSearch, setTypeSearch] = useState("");
   const [editing, setEditing] = useState<Row | "new" | null>(null);
+  useEffect(() => { setPage(1); setSearch(""); setStatusFilter(""); }, [typeId]);
   const meta = useQuery({ queryKey: ["meta", entity], queryFn: () => api<EntityMeta>(`/inv/${entity}/meta`), staleTime: Infinity });
   const bases = useQuery({ queryKey: ["bases"], queryFn: () => api<Base[]>("/bases"), staleTime: Infinity });
   const statusCol = meta.data?.columns.find((c) => STATUS_COLS.includes(c.name) && c.type === "enum");
   const params = new URLSearchParams({ page: String(page), page_size: "50", sort, order, q: search, command });
   if (baseFilter && meta.data?.scope) params.set(meta.data.scope, baseFilter);
   if (statusFilter && statusCol) params.set(statusCol.name, statusFilter);
+  const typeFilters = new URLSearchParams({ command }); // the base / command filters, shared by the cards and the type header
+  if (baseFilter && meta.data?.scope) typeFilters.set(meta.data.scope, baseFilter);
+  if (typeId) params.set("aircraft_type_id", typeId);
   const list = useQuery({
     queryKey: ["inv", entity, params.toString()], queryFn: () => api<Page<Row>>(`/inv/${entity}?${params}`),
-    enabled: !!meta.data, placeholderData: keepPreviousData,
+    enabled: !!meta.data && !typeCards, placeholderData: keepPreviousData,
   });
   const cols = useMemo(() => (meta.data?.columns ?? []).filter((c) => !HIDE.has(c.name) && c.type !== "geometry").slice(0, 12), [meta.data]);
   const remove = useMutation({
@@ -82,7 +90,7 @@ export function Inventory({ user }: { user: User }) {
     const csv = ["# SIMULATED DATA — SIH 2026 DEMO — NOT REAL", head.join(","), ...all.items.map((r) => head.map((h) => esc(r[h])).join(","))].join("\n");
     const a = document.createElement("a");
     a.href = URL.createObjectURL(new Blob([csv], { type: "text/csv" }));
-    a.download = `${entity}.csv`;
+    a.download = `${entity}${typeId ? `-type-${typeId}` : ""}.csv`;
     a.click();
   };
   const scopeVal = (r: Row) => (meta.data?.scope ? r[meta.data.scope] : undefined);
@@ -98,8 +106,11 @@ export function Inventory({ user }: { user: User }) {
       {meta.error && <ErrorText error={meta.error} />}
       {meta.data && (
         <>
+          {typeId && <AircraftTypeHeader typeId={typeId} filters={typeFilters.toString()} />}
           <div className="toolbar">
-            {meta.data.search.length > 0 && <input className="input" placeholder={`Search ${meta.data.search.join(", ")}`} value={search}
+            {typeCards && <input className="input" placeholder="Search aircraft type" value={typeSearch}
+              onChange={(e) => setTypeSearch(e.target.value)} aria-label="Search aircraft type" />}
+            {!typeCards && meta.data.search.length > 0 && <input className="input" placeholder={`Search ${meta.data.search.join(", ")}`} value={search}
               onChange={(e) => { setSearch(e.target.value); setPage(1); }} aria-label="Search" />}
             {meta.data.scope && (
               <select className="select" value={baseFilter} onChange={(e) => { setBaseFilter(e.target.value); setPage(1); }} aria-label="Base">
@@ -112,7 +123,7 @@ export function Inventory({ user }: { user: User }) {
                 <option value="">All commands</option>{["WAC", "SWAC", "CAC", "EAC", "SAC", "TC", "MC"].map((c) => <option key={c}>{c}</option>)}
               </select>
             )}
-            {statusCol && (
+            {statusCol && !typeCards && (
               <select className="select" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} aria-label="Status">
                 <option value="">Any {label(statusCol.name).toLowerCase()}</option>{statusCol.values?.map((v) => <option key={v} value={v}>{label(v)}</option>)}
               </select>
@@ -121,6 +132,7 @@ export function Inventory({ user }: { user: User }) {
             <button className="btn" onClick={exportCsv} disabled={user.role === "VIEWER"} title={user.role === "VIEWER" ? "Viewers can't export" : "Export the filtered view (max 500 rows)"}>Export CSV</button>
             {canWrite(user, meta.data, undefined) && <button className="btn btn-primary" onClick={() => setEditing("new")}>New {meta.data.label.toLowerCase().replace(/s$/, "")}</button>}
           </div>
+          {typeCards ? <AircraftTypeCards filters={typeFilters.toString()} search={typeSearch} /> : <>
           {meta.data.readonly && <div className="notice" style={{ marginBottom: 8 }}>{meta.data.label} are maintained by the system{entity === "sorties" ? "; create sorties from a base panel" : ""}.</div>}
           <div className="table-wrap">
             <table className="table">
@@ -164,7 +176,9 @@ export function Inventory({ user }: { user: User }) {
               <button className="btn btn-sm" disabled={page * list.data.page_size >= list.data.total} onClick={() => setPage(page + 1)}>Next</button>
             </div>
           )}
+          </>}
           {editing && <EntityForm entity={entity} meta={meta.data} row={editing === "new" ? null : editing} user={user} bases={bases.data ?? []}
+            preset={typeId ? { aircraft_type_id: Number(typeId) } : undefined}
             onClose={() => setEditing(null)} onSaved={() => { setEditing(null); qc.invalidateQueries({ queryKey: ["inv", entity] }); qc.invalidateQueries({ queryKey: ["summary"] }); }} />}
         </>
       )}
@@ -172,12 +186,13 @@ export function Inventory({ user }: { user: User }) {
   );
 }
 
-function EntityForm({ entity, meta, row, user, bases, onClose, onSaved }: {
-  entity: string; meta: EntityMeta; row: Row | null; user: User; bases: Base[]; onClose: () => void; onSaved: () => void;
+function EntityForm({ entity, meta, row, user, bases, preset, onClose, onSaved }: {
+  entity: string; meta: EntityMeta; row: Row | null; user: User; bases: Base[]; preset?: Record<string, unknown>; onClose: () => void; onSaved: () => void;
 }) {
   const fields = meta.columns.filter((c) => c.editable && !HIDE.has(c.name));
   const init: Record<string, unknown> = {};
   for (const c of fields) init[c.name] = row ? row[c.name] : meta.scope === c.name && user.base_id ? user.base_id : c.type === "bool" ? false : "";
+  if (!row && preset) Object.assign(init, preset);
   if (meta.has_point) { init.lat = row?.lat ?? ""; init.lon = row?.lon ?? ""; }
   const [v, setV] = useState(init);
   const [err, setErr] = useState<ApiError | null>(null);

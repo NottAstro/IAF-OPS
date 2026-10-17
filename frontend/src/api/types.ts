@@ -117,6 +117,23 @@ export interface Page<T> {
 
 export type Row = Record<string, unknown> & { id: number; version?: number; simulated?: boolean };
 
+/** GET /inv/aircraft/by-type: one row per aircraft type that has aircraft. `total` excludes retired; QRA ⊂ serviceable. */
+export interface AircraftTypeCount {
+  id: number;
+  name: string;
+  category: "FIXED_WING" | "ROTARY_WING" | "UAV_FIXED_WING" | "UAV_ROTARY_SMALL";
+  role: string;
+  total: number;
+  serviceable: number;
+  qra: number;
+  maintenance: number;
+  unserviceable: number;
+  depot: number;
+  retired: number;
+  squadrons: number;
+  simulated: boolean;
+}
+
 export interface ColumnMeta {
   name: string;
   type: "int" | "float" | "bool" | "text" | "enum" | "date" | "datetime" | "list" | "point" | "geometry";

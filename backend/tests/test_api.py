@@ -95,6 +95,23 @@ def test_official_boundary_depiction():
                       "WHERE level='ADM0' AND country_iso3='IND'")
 
 
+def test_aircraft_by_type_matches_the_list():
+    c = login("viewer")
+    types = c.get("/api/v1/inv/aircraft/by-type").json()
+    assert types and len({t["id"] for t in types}) == len(types)
+    t = max(types, key=lambda x: x["total"])
+    listed = c.get(f"/api/v1/inv/aircraft?aircraft_type_id={t['id']}&page_size=1").json()["total"]
+    assert t["total"] + t["retired"] == listed
+    assert t["serviceable"] + t["maintenance"] + t["unserviceable"] + t["depot"] == t["total"] and t["qra"] <= t["serviceable"]
+    one_base = c.get("/api/v1/inv/aircraft/by-type?home_base_id=1").json()
+    assert sum(x["total"] for x in one_base) < sum(x["total"] for x in types)
+
+
+def test_boundary_tiles_render_even_without_osm_tables():
+    r = login("viewer").get("/api/v1/gis/tiles/4/11/6.pbf")  # central India; gis_line_lo may be absent (no `make osm`)
+    assert r.status_code == 200 and b"admin" in r.content, r.status_code
+
+
 def test_synthetic_sites_stay_inside_buffer():
     from app.geo import load_india
     from shapely import wkb

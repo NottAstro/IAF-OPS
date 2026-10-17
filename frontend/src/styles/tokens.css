@@ -25,6 +25,7 @@
   --critical: #f87171;
   --info: #7dd3fc;
   --neutral: #94a3b8;
+  --qra: #2dd4bf;              /* quick reaction alert in the aircraft-type counts (a subset of serviceable) */
 
   --sim: #b79cff;              /* synthetic inventory marker */
   --sim-ink: #12061f;

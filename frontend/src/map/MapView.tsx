@@ -157,12 +157,13 @@ export function MapView({ hidden }: { hidden: boolean }) {
 
   // ---------------------------------------------------------------- data
   const bases = useQuery({ queryKey: ["bases"], queryFn: () => api<Base[]>("/bases"), staleTime: Infinity });
-  const status = useQuery({ queryKey: ["base-status"], queryFn: () => api<BaseStatus[]>("/bases/status"), refetchInterval: 30000 });
+  // While another page covers the map (hidden), nothing here polls or animates: it resumes on return to /map.
+  const status = useQuery({ queryKey: ["base-status"], queryFn: () => api<BaseStatus[]>("/bases/status"), refetchInterval: hidden ? false : 30000 });
   const box = s.camera?.bbox.map((v) => v.toFixed(1)).join(",") ?? "";
   const live = useQuery({
     queryKey: ["live", box],
     queryFn: () => api<{ tracks: LiveTrack[]; status: Record<string, never> }>(`/live/aircraft?bbox=${box}`),
-    refetchInterval: 10000, enabled: s.mode === "LIVE" && !!box, placeholderData: (p) => p,
+    refetchInterval: 10000, enabled: s.mode === "LIVE" && !!box && !hidden, placeholderData: (p) => p,
   });
   const metars = useQuery({
     queryKey: ["wx", "metars"], queryFn: () => api<{ stations: Metar[] }>("/wx/metars"), refetchInterval: 300000,
@@ -230,6 +231,7 @@ export function MapView({ hidden }: { hidden: boolean }) {
   useEffect(() => {
     if (!map) return;
     if (s.mode !== "LIVE") return void setData(map, "live", []);
+    if (hidden) return; // the 1 s dead-reckoning redraw re-renders the whole (3D) map: pause it off-screen
     const fetched = live.dataUpdatedAt || Date.now();
     const colors = { civil: cssVar("--caution"), military: cssVar("--accent"), uav: cssVar("--warning") };
     const crit = cssVar("--critical");
@@ -252,7 +254,7 @@ export function MapView({ hidden }: { hidden: boolean }) {
     draw();
     const timer = setInterval(draw, 1000);
     return () => clearInterval(timer);
-  }, [map, live.data, live.dataUpdatedAt, s.liveCats, s.mode]);
+  }, [map, live.data, live.dataUpdatedAt, s.liveCats, s.mode, hidden]);
 
   // ---------------------------------------------------------------- weather: airfield METAR + clouds + rain
   useEffect(() => {
@@ -287,7 +289,20 @@ export function MapView({ hidden }: { hidden: boolean }) {
     for (const id of ["wx-clouds", "wx-rain"]) if (map?.getLayer(id)) map.setPaintProperty(id, "raster-opacity", s.overlayOpacity);
   }, [map, s.overlayOpacity]);
 
-  useWind(map, s.mode === "WX" && s.wx.wind, s.windModel);
+  useWind(map, s.mode === "WX" && s.wx.wind && !hidden, s.windModel);
+
+  // ponytail: MapLibre has no pause API, and with 3D terrain it re-renders every frame even under another page. While
+  // hidden we swallow repaint requests (state, camera and tiles are kept) and repaint once on return. Upgrade: a real
+  // pause if MapLibre adds one.
+  useEffect(() => {
+    if (!map || !hidden) return;
+    map.triggerRepaint = () => undefined;
+    return () => {
+      delete (map as Partial<Pick<MlMap, "triggerRepaint">>).triggerRepaint;
+      map.resize();
+      map.triggerRepaint();
+    };
+  }, [map, hidden]);
 
   // ---------------------------------------------------------------- 3D terrain everywhere except Weather, which is laid flat
   const wasFlat = useRef(true);  // true at start, so the map tilts into 3D once it has loaded
