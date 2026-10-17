@@ -4,13 +4,14 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { Disruption, PlanItemView, PlanKpis, PlanListRow, PlanView, Priority, User } from "../api/types";
+import type { Disruption, Fix, PlanItemView, PlanKpis, PlanListRow, PlanView, Priority, User } from "../api/types";
 import { ErrorText, Loading, Modal, Pill, Row, Sim, ToneText } from "../components/ui";
+import { ManualTab } from "../features/manual";
 import { ChangePill, Explanation, PlanKpiStrip, PrioPill, Timeline, Unmet, hhmm } from "../features/ops";
 import { RANK, istTime, label, num } from "../lib/format";
 import { useStore } from "../store";
 
-type Tab = "plan" | "changes" | "whatif" | "coa";
+type Tab = "plan" | "changes" | "whatif" | "coa" | "manual";
 const PRESET_LABEL: Record<string, string> = { BALANCED: "Balanced", MAX_COVERAGE: "Max coverage", MIN_RISK: "Min risk", MIN_FUEL: "Min fuel", STABILITY: "Stability" };
 const PRIOS: Priority[] = ["P1", "P2", "P3", "P4"];
 
@@ -23,6 +24,12 @@ export function Planner({ user }: { user: User }) {
   const [preset, setPreset] = useState("BALANCED");
   const [sel, setSel] = useState<{ kind: "item" | "unmet"; id: number } | null>(params.get("item") ? { kind: "item", id: Number(params.get("item")) } : null);
   const canPlan = user.role === "ADMIN" || user.role === "COMMAND_HQ";
+  const split = useMutation({                   // D42: apply a checked split fix to an uncovered mission
+    mutationFn: ({ id, f }: { id: number; f: Fix }) => api<{ parts: { id: number; code: string }[] }>(`/ops/missions/${id}/split`,
+      { method: "POST", body: { kind: f.kind, parts: f.parts, t0: f.t0, sizes: f.sizes ?? null } }),
+    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["missions"] }); toast(`Split into ${r.parts.map((x) => x.code).join(", ")}. Generate a new plan to cover them.`, "INFO"); },
+    onError: (e) => toast(e instanceof ApiError ? e.message : "Split failed", "CRITICAL"),
+  });
   const list = useQuery({ queryKey: ["plans", "list"], queryFn: () => api<{ items: PlanListRow[]; committed_id: number | null; pending_retask_id: number | null }>("/ops/plans?limit=25"),
     refetchInterval: 15000 });
   const want = params.get("plan");
@@ -112,7 +119,7 @@ export function Planner({ user }: { user: User }) {
 
         <div className="tabs" role="tablist" style={{ marginTop: 16 }}>
           {([["plan", "Plan"], ["changes", `Changes${changes.length || p.unmet.some((u) => u.dropped_item_id) ? ` (${changes.length + p.unmet.filter((u) => u.dropped_item_id).length})` : ""}`],
-            ["whatif", "What-if"], ["coa", "Compare COAs"]] as [Tab, string][]).map(([k, n]) => (
+            ["whatif", "What-if"], ["coa", "Compare COAs"], ["manual", "Manual baseline"]] as [Tab, string][]).map(([k, n]) => (
             <button key={k} role="tab" aria-selected={tab === k} className={`tab${tab === k ? " on" : ""}`} onClick={() => setTab(k)}>{n}</button>
           ))}
         </div>
@@ -132,7 +139,9 @@ export function Planner({ user }: { user: User }) {
                 <div className="detail-title"><PrioPill p={unmet.mission.priority} /> <span className="mono">{unmet.mission.code}</span>
                   {unmet.dropped_item_id ? <ChangePill c="DROPPED" /> : <ToneText toneName="caution">Not covered</ToneText>}</div>
                 <div className="muted" style={{ marginBottom: 6 }}>{unmet.mission.name}</div>
-                <Unmet m={unmet.mission} reasons={unmet.reasons} fixes={unmet.fixes} />
+                <Unmet m={unmet.mission} reasons={unmet.reasons} fixes={unmet.fixes} busy={split.isPending}
+                  onApply={canPlan ? (f) => confirm(`${f.text}?\n\nThis replaces ${unmet.mission.code} with ${f.parts} missions. Generate a new plan afterwards.`)
+                    && split.mutate({ id: unmet.mission.id, f }) : undefined} />
               </>}
             </aside>
           </div>
@@ -140,6 +149,7 @@ export function Planner({ user }: { user: User }) {
         {tab === "changes" && <ChangesTab p={p} changes={changes} canPlan={canPlan} onSel={(id) => { setSel({ kind: "item", id }); setTab("plan"); }} />}
         {tab === "whatif" && <WhatIf canPlan={canPlan} />}
         {tab === "coa" && <Coa canPlan={canPlan} />}
+        {tab === "manual" && <ManualTab canPlan={canPlan} />}
       </>}
     </div>
   );

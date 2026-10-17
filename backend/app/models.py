@@ -26,7 +26,7 @@ DUTY_STATUS = ("ON_DUTY", "STANDBY", "QRA", "BRIEFED", "AIRBORNE", "CREW_REST", 
 SORTIE_STATUS = ("PLANNED", "CREWED", "READY", "AIRBORNE", "ON_STATION", "RTB", "LANDED", "COMPLETED",
                  "CANCELLED", "ABORTED")
 ACTIVE_SORTIE = ("CREWED", "READY", "AIRBORNE", "ON_STATION", "RTB")
-MISSION_STATUS = ("REQUESTED", "APPROVED", "PLANNED", "TASKED", "ACTIVE", "COMPLETED", "CANCELLED")
+MISSION_STATUS = ("REQUESTED", "APPROVED", "PLANNED", "TASKED", "ACTIVE", "COMPLETED", "CANCELLED", "SPLIT")
 
 
 class Base(DeclarativeBase):
@@ -290,6 +290,13 @@ class Mission(Common, Base):
     approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     outcome: Mapped[str] = mapped_column(E("NONE", "PARTIAL", "MET", "MISSED"), default="NONE", server_default="NONE")
     on_station_achieved_min: Mapped[float] = mapped_column(Float, default=0, server_default="0")
+    # D41: needs this mission (an AEW&C orbit) on station for its whole time on station
+    depends_on_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("mission.id"), index=True)
+    # D42: a part of a split mission (status SPLIT on the parent): RELIEF = one shift in time, BASES = a share of aircraft
+    parent_mission_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("mission.id"), index=True)
+    part_no: Mapped[int | None] = mapped_column(Integer)
+    parts: Mapped[int | None] = mapped_column(Integer)
+    split_kind: Mapped[str | None] = mapped_column(String(8))
 
 
 class Sortie(Common, Base):
@@ -585,7 +592,7 @@ class AirspaceZone(Common, Base):
     __tablename__ = "airspace_zone"
     code: Mapped[str] = mapped_column(String(24), unique=True)
     name: Mapped[str] = mapped_column(Text)
-    kind: Mapped[str] = mapped_column(E("TRAINING_AREA", "RESTRICTED", "DANGER", "CORRIDOR", "TEMP_RESERVATION"))
+    kind: Mapped[str] = mapped_column(E("TRAINING_AREA", "RESTRICTED", "DANGER", "CORRIDOR", "TEMP_RESERVATION", "CIVIL_TERMINAL"))
     geom = mapped_column(Geometry("POLYGON", srid=4326), nullable=False)
     lower_m: Mapped[float] = mapped_column(Float, default=0)
     upper_m: Mapped[float] = mapped_column(Float, default=15000)
@@ -744,6 +751,21 @@ class MlModel(Base):
     coef: Mapped[list] = mapped_column(JSONB)
     scale: Mapped[dict] = mapped_column(JSONB)
     metrics: Mapped[dict] = mapped_column(JSONB)
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+
+class ManualSession(Base):
+    """Manual planning baseline (D43): one timed attempt to plan a snapshot by hand, and the optimiser on the same one."""
+    __tablename__ = "manual_session"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())   # wall clock
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sim_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    missions: Mapped[int] = mapped_column(Integer, default=0)
+    checks: Mapped[int] = mapped_column(Integer, default=0)
+    picks: Mapped[list | None] = mapped_column(JSONB)
+    result: Mapped[dict | None] = mapped_column(JSONB)        # manual coverage / violations, optimiser on the same snapshot
     is_simulated: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
 

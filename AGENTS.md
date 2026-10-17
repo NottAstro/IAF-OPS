@@ -73,6 +73,10 @@ stop `dev.ps1` first: the running simulator writes to the same database).
 - The validator (`decide/validate.py`) and the optimiser's rows (`decide/optimiser.py`) must mean the same thing for every
   limit (concurrency at start events for aircraft, crew, weapons, QRA; totals for fuel; slots for launches). Change both
   or neither (D40). Civil traffic is a cost, never a rule (D39).
+- One package per mission is an invariant: split missions are separate part missions (D42), never several items for one
+  mission id. Dependencies are one level (D41). Inside the planner the validator gets `cover=` (supporters outside the
+  solve only); elsewhere it falls back to the committed plan.
+- Test runs must not leave `manual_session` rows: the benchmark reports them as human baselines (D43).
 - Reuse `crud_router`, `audit()`, `rbac.require()`, `DataTable` and `EntityForm` instead of writing one-off versions.
 - The region bbox and border buffer come **only** from `shared/region.json`.
 

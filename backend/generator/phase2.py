@@ -217,7 +217,54 @@ def generate(conn, W, t0: datetime, G, cmd_id: dict, own: dict, types: dict) -> 
                         target_base_id=target_base["id"] if target_base else None, required_aircraft=nreq,
                         eligible_roles=roles, loadout_code=None, on_station_min=on_min, min_quals=quals,
                         max_risk="HIGH" if kind == "RECCE_ISR" else "MED", outcome="NONE", on_station_achieved_min=0,
-                        approved_at=t0 - timedelta(hours=rng.uniform(1, 12)), is_simulated=True, source="SYNTHETIC"))
+                        approved_at=t0 - timedelta(hours=rng.uniform(1, 12)), depends_on_id=None, is_simulated=True,
+                        source="SYNTHETIC"))
+    # D41: barrier CAPs under AEW&C cover, inside an AEW orbit's window and needing it on station the whole time
+    cmd_of = {i: c for c, i in cmd_id.items()}
+    for a in [x for x in missions if x["mission_type"] == "AEW_SUPPORT" and x["status"] == "APPROVED"]:
+        rng = R("dep", a["code"])
+        if rng.random() > 0.7:
+            continue
+        cmd = cmd_of[a["requesting_command_id"]]
+        target = inward(rng, cmd, 70, 130)
+        ws = a["window_start"] + timedelta(minutes=rng.uniform(60, 120))
+        we = min(a["window_end"], ws + timedelta(hours=rng.uniform(2.0, 3.0)))
+        if not target or not G.ok(*target) or we - ws < timedelta(minutes=90) or we < t0 + timedelta(hours=2):
+            continue
+        pw, roles, (nmin, _), on_min, _ = D.MISSION_TEMPLATES["AIR_DEFENCE_PATROL"]
+        seq["AIR_DEFENCE_PATROL"] = seq.get("AIR_DEFENCE_PATROL", 0) + 1
+        missions.append(dict(
+            id=W.next_id("mission"), code=f"SIM-CAP-{cmd}-{seq['AIR_DEFENCE_PATROL']:03d}",
+            name=f"Barrier CAP under AEW&C cover near {place_name(*target)}", mission_type="AIR_DEFENCE_PATROL",
+            priority=a["priority"] if a["priority"] in ("P1", "P2") else "P2", window_start=ws, window_end=we, status="APPROVED",
+            requesting_command_id=a["requesting_command_id"], target_geom=f"SRID=4326;POINT({target[0]:.5f} {target[1]:.5f})",
+            target_base_id=None, required_aircraft=nmin, eligible_roles=roles, loadout_code=None, on_station_min=on_min,
+            min_quals=[], max_risk="MED", outcome="NONE", on_station_achieved_min=0, approved_at=a["approved_at"],
+            depends_on_id=a["id"], is_simulated=True, source="SYNTHETIC"))
+    # D42: two missions no single package can fly, on day 0: a 6 h continuous CAP (needs reliefs) and a disaster-relief
+    # surge needing more utility helicopters than any one base holds (needs parts from several bases)
+    rng = R("split", str(day0.date()))
+    for kind, cmd, need, hold, length, label, kmin, kmax in (
+            ("AIR_DEFENCE_PATROL", "WAC", 2, 360, 8.0, "Continuous CAP (6 h)", 70, 130),
+            ("HADR", "WAC", 16, 60, 6.0, "Flood relief surge (Yamuna plains)", None, None)):
+        if kind == "HADR":                       # Yamuna flood plain: in reach of the helicopter bases at Sarsawa and Hindan
+            target = (77.55, 29.4)
+        else:
+            target = inward(rng, cmd, kmin, kmax)
+        ws = max(t0 + timedelta(hours=2), day0 + timedelta(hours=9))
+        if not target or not G.ok(*target):
+            continue
+        pw, roles, _, _, _ = D.MISSION_TEMPLATES[kind]
+        short = D.MISSION_LABEL[kind][0]
+        seq[kind] = seq.get(kind, 0) + 1
+        missions.append(dict(
+            id=W.next_id("mission"), code=f"SIM-{short}-{cmd}-{seq[kind]:03d}", name=f"{label} near {place_name(*target)}",
+            mission_type=kind, priority="P1" if kind == "AIR_DEFENCE_PATROL" else "P2", window_start=ws,
+            window_end=ws + timedelta(hours=length), status="APPROVED", requesting_command_id=cmd_id[cmd],
+            target_geom=f"SRID=4326;POINT({target[0]:.5f} {target[1]:.5f})", target_base_id=None, required_aircraft=need,
+            eligible_roles=roles if kind == "AIR_DEFENCE_PATROL" else ["UTILITY_HELO"], loadout_code=None, on_station_min=hold,
+            min_quals=[], max_risk="MED", outcome="NONE", on_station_achieved_min=0, approved_at=t0 - timedelta(hours=2),
+            depends_on_id=None, is_simulated=True, source="SYNTHETIC"))
     W.insert("mission", missions, geom=("target_geom",))
     out["missions"] = len(missions)
 

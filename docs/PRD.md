@@ -571,7 +571,7 @@ Your required elements, mapped to where each is shown and the entity it comes fr
 ---
 
 ## 17. Phase 2: decision support (SIH26250 "dynamic air operations and resource optimisation")
-Design and rationale: [PHASE2_IMPLEMENTATION_PLAN](PHASE2_IMPLEMENTATION_PLAN.md). Decision records: ARCHITECTURE D28–D40.
+Design and rationale: [PHASE2_IMPLEMENTATION_PLAN](PHASE2_IMPLEMENTATION_PLAN.md). Decision records: ARCHITECTURE D28–D44.
 Measured results: [BENCHMARK](BENCHMARK.md), [MODEL_CARD_SNAG_RISK](MODEL_CARD_SNAG_RISK.md).
 Everything is advisory: a person approves every change, and every approval is audited.
 
@@ -582,6 +582,8 @@ Everything is advisory: a person approves every change, and every approval is au
 | FR-MSN-02 | M | Command HQ requests missions for its command; Air HQ and the directing staff create approved missions; Air HQ approves requests. Cancel cancels any planned sortie. Audited. |
 | FR-MSN-03 | M | The generator creates two days of realistic mission requests per operational command (CAP, ISR, AEW&C, AAR, airlift, HADR, casualty evacuation, strike and CAS exercises, training). |
 | FR-MSN-04 | S | A mission's area can be picked on the map. |
+| FR-MSN-05 | C | Public airspace (prohibited, restricted, danger areas and civil terminal airspace) can be imported from OpenAIP next to the synthetic zones; prohibited areas are never routed through (D44). |
+| FR-MSN-06 | S | A mission can depend on another (an AEW&C orbit) being on station for its whole time on station (D41). |
 
 ### FR-PLN: planning
 | ID | P | Requirement |
@@ -596,6 +598,8 @@ Everything is advisory: a person approves every change, and every approval is au
 | FR-PLN-08 | S | Air-to-air refuelling: a package that can't reach or hold without fuel gets a tanker leg (tanker base, rendezvous, crew, fuel) when its type and mission allow it; receiver crews must be AAR-qualified; the tanker becomes its own sortie at commit (D36). |
 | FR-PLN-09 | M | Launch rate: no more than 8 aircraft launch from one open runway in a 15-minute slot (D36). |
 | FR-PLN-10 | S | P1/P2 packages are given the free tails least likely to develop a defect (snag-risk model, FR-FCT-03); the risk per tail and per package is shown (D38). |
+| FR-PLN-12 | S | Split missions: a mission no single package can fly is offered a checked split, as reliefs in time (continuous cover, 15 min handovers) or as parts from different bases on station together; applying it is a human action; parts are covered all or nothing (D42). |
+| FR-PLN-13 | M | Manual planning baseline: a timed manual session on the same snapshot, judged by the same rules, stored beside the optimiser's result and reported in the benchmark (PS-8, D43). |
 | FR-PLN-11 | S | Civil traffic: routes through busy civil airspace (airport terminal areas, live ADS-B density for near-term launches) cost more, so quieter options win when otherwise close; the explanation names the busy spot (D39). |
 
 ### FR-RTK: dynamic re-tasking
@@ -640,4 +644,6 @@ Everything is advisory: a person approves every change, and every approval is au
 5. "What if 20 Su-30MKI are grounded tomorrow?" (what-if)
 6. "A P1 pop-up 20 minutes away: can anyone already airborne take it?" (in-flight re-role → commit)
 7. "Which of my tails are most likely to go unserviceable, and did the P1 packages get the reliable ones?" (base panel snag risk, package explanation)
+8. "Nobody can hold a 6-hour CAP: what now?" (uncovered → "Split into 2 reliefs" → apply → re-plan)
+9. "How much faster is this than planning by hand?" (Planner → Manual baseline, then BENCHMARK.md)
 

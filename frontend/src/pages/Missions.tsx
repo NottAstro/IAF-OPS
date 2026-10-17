@@ -16,7 +16,7 @@ interface Meta {
   commands: { id: number; code: string; name: string }[];
 }
 const STATUS_TONE: Record<string, string> = { REQUESTED: "PLANNED", APPROVED: "CAUTION", PLANNED: "STANDBY", TASKED: "OPERATIONAL", ACTIVE: "AIRBORNE",
-  COMPLETED: "COMPLETED", CANCELLED: "CANCELLED" };
+  COMPLETED: "COMPLETED", CANCELLED: "CANCELLED", SPLIT: "STANDBY" };
 const OUTCOME_TONE: Record<string, string> = { MET: "ok", PARTIAL: "caution", MISSED: "critical" };
 
 export function Missions({ user }: { user: User }) {
@@ -70,7 +70,10 @@ export function Missions({ user }: { user: User }) {
           <tbody>{rows.map((m) => (
             <tr key={m.id} className={focus === m.id ? "sel" : ""}>
               <td><PrioPill p={m.priority} /></td>
-              <td style={{ maxWidth: 300 }}><span className="mono">{m.code}</span> <span className="muted">{m.name}</span></td>
+              <td style={{ maxWidth: 300 }}><span className="mono">{m.code}</span> <span className="muted">{m.name}</span>
+                {m.depends_on && <div className="dim" style={{ fontSize: 11 }}>needs <span className="mono">{m.depends_on}</span> on station</div>}
+                {m.parent_code && <div className="dim" style={{ fontSize: 11 }}>{m.split_kind === "RELIEF" ? "relief" : "part"} {m.part_no} of {m.parts} · <span className="mono">{m.parent_code}</span></div>}
+                {m.status === "SPLIT" && <div className="dim" style={{ fontSize: 11 }}>split into {m.parts} {m.split_kind === "RELIEF" ? "reliefs" : "packages from different bases"}</div>}</td>
               <td>{meta.data?.templates[m.mission_type]?.label ?? label(m.mission_type)}</td>
               <td className="mono">{istTime(m.window_start, true).replace(" IST", "")}–{hhmm(m.window_end)}</td>
               <td>{m.command ?? "—"}</td>
@@ -109,6 +112,8 @@ function NewMission({ meta, user, onClose }: { meta: Meta; user: User; onClose: 
     max_risk: "MED", min_quals: [] as string[], notes: "",
   };
   const [v, setV] = useState(init);
+  const [dep, setDep] = useState("");          // D41: the AEW&C orbit this mission needs on station
+  const aew = useQuery({ queryKey: ["missions", "aew"], queryFn: () => api<{ items: MissionRow[] }>("/ops/missions?mission_type=AEW_SUPPORT&horizon_h=48") });
   const [fields, setFields] = useState<Record<string, string>>({});
   const set = (k: string, x: unknown) => setV({ ...v, [k]: x });
   const pickType = (t: string) => setV({ ...v, mission_type: t, required_aircraft: String(meta.templates[t].required), on_station_min: String(meta.templates[t].on_station_min) });
@@ -118,7 +123,7 @@ function NewMission({ meta, user, onClose }: { meta: Meta; user: User; onClose: 
       window_end: new Date(v.window_end).toISOString(), target_base_id: v.target === "base" && v.target_base_id ? Number(v.target_base_id) : null,
       lon: v.target === "point" && v.lon ? Number(v.lon) : null, lat: v.target === "point" && v.lat ? Number(v.lat) : null,
       required_aircraft: Number(v.required_aircraft), on_station_min: Number(v.on_station_min), max_risk: v.max_risk, min_quals: v.min_quals,
-      notes: v.notes || null } }),
+      notes: v.notes || null, depends_on_id: dep ? Number(dep) : null } }),
     onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["missions"] }); st.toast(`${r.code} ${r.status === "APPROVED" ? "approved" : "requested"}`, "INFO"); onClose(); },
     onError: (e) => { if (e instanceof ApiError) setFields(e.fields); },
   });
@@ -175,6 +180,13 @@ function NewMission({ meta, user, onClose }: { meta: Meta; user: User; onClose: 
               onChange={() => set("min_quals", v.min_quals.includes(x) ? v.min_quals.filter((y) => y !== x) : [...v.min_quals, x])} /> {label(x)}</label>
           ))}</div>
           <span className="dim" style={{ fontSize: 11 }}>Night and NVG are added automatically for packages that fly after dark.</span></div>
+        <label className="field" style={{ gridColumn: "1 / -1" }}><span className="field-label">Needs AEW&amp;C cover from</span>
+          <select className="select" value={dep} onChange={(e) => setDep(e.target.value)}>
+            <option value="">No dependency</option>
+            {(aew.data?.items ?? []).filter((a) => !["CANCELLED", "COMPLETED"].includes(a.status)).map((a) => (
+              <option key={a.id} value={a.id}>{a.code} · {istTime(a.window_start, true).replace(" IST", "")}–{hhmm(a.window_end)} · {a.priority}</option>))}
+          </select>
+          <span className="dim" style={{ fontSize: 11 }}>The planner then flies this mission only while that orbit is on station.</span>{err("depends_on_id")}</label>
         <label className="field" style={{ gridColumn: "1 / -1" }}><span className="field-label">Notes</span>
           <input className="input" value={v.notes} onChange={(e) => set("notes", e.target.value)} /></label>
       </div>

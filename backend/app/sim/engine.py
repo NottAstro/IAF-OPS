@@ -506,6 +506,13 @@ class Simulator:
             m.outcome = "MET" if m.on_station_achieved_min >= m.on_station_min * 0.95 else "PARTIAL" if m.on_station_achieved_min > 0 else "MISSED"
             m.status = "COMPLETED"
             ctx.changed.add("mission")
+            if m.parent_mission_id:               # D42: the split parent completes with its last part
+                kids = list(db.scalars(select(M.Mission).where(M.Mission.parent_mission_id == m.parent_mission_id)))
+                if all(k.status in ("COMPLETED", "CANCELLED") for k in kids):
+                    p = db.get(M.Mission, m.parent_mission_id)
+                    outs = {k.outcome for k in kids}
+                    p.status, p.outcome = "COMPLETED", "MET" if outs == {"MET"} else "MISSED" if outs <= {"MISSED", "NONE"} else "PARTIAL"
+                    p.on_station_achieved_min = round(sum(k.on_station_achieved_min or 0 for k in kids), 1)
 
     # ------------------------------------------------------------------ turnaround + maintenance (FR-SIM-06)
     def aircraft(self, ctx: Ctx) -> None:

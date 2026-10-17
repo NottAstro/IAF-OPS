@@ -15,6 +15,9 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 import numpy as np
+from shapely import wkb
+from shapely.geometry import Point
+from shapely.prepared import prep
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
@@ -28,6 +31,7 @@ LIVE_PER_UNIT = 10              # ten civil aircraft in a 0.5° cell = one unit 
 LIVE_MAX_AGE_S = 180
 LIVE_FULL_H, LIVE_ZERO_H = 2.0, 6.0
 SAMPLE_KM = 25
+TERMINAL_WEIGHT = 1.5           # inside an imported CTR / TMA / ATZ (D44)
 BUSY, MODERATE = 2.5, 1.0       # density per sample: what the explanation calls busy / moderate
 
 _STATIC: dict = {}
@@ -72,6 +76,15 @@ def _static(db: Session) -> tuple[list, dict]:
                     hit = d <= TMA_KM
                     if hit.any():
                         grid[(i, j)] = float((w[hit] * (1 - d[hit] / TMA_KM / 2)).sum())   # stronger near the field
+        # D44: imported civil terminal airspace (CTR / TMA / ATZ polygons) where present
+        for (g,) in db.execute(text("SELECT ST_AsBinary(geom) FROM airspace_zone WHERE kind = 'CIVIL_TERMINAL'")):
+            poly = wkb.loads(bytes(g))
+            pp = prep(poly)
+            x0, y0, x1, y1 = poly.bounds
+            for i in range(int(x0 // CELL), int(x1 // CELL) + 1):
+                for j in range(int(y0 // CELL), int(y1 // CELL) + 1):
+                    if pp.contains(Point((i + 0.5) * CELL, (j + 0.5) * CELL)):
+                        grid[(i, j)] = grid.get((i, j), 0.0) + TERMINAL_WEIGHT
         _STATIC["grid"], _STATIC["aps"] = grid, aps
     return _STATIC["aps"], _STATIC["grid"]
 

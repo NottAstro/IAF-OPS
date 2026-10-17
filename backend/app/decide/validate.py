@@ -27,6 +27,7 @@ RULE_TEXT = {
     "THREAT": "Route risk above the mission's limit",
     "LAUNCH_RATE": "More launches than the runways can take in one slot",
     "TANKER": "The package's tanker can no longer fly as planned",
+    "DEPENDENCY": "Its AEW&C (support) mission isn't on station for the whole time",
 }
 
 
@@ -47,6 +48,7 @@ class ItemSpec:
     req: Req = field(default_factory=Req)
     duration_h: float = 1.0
     turnaround: int = 45
+    off_station: datetime | None = None
 
     @property
     def ac_iv(self):
@@ -71,7 +73,9 @@ class Violation:
                 "detail": self.detail, "entity_type": self.entity_type, "entity_id": self.entity_id}
 
 
-def validate(st: OpsState, items: list[ItemSpec], check_wx: bool = True) -> list[Violation]:
+def validate(st: OpsState, items: list[ItemSpec], check_wx: bool = True, cover: dict | None = None) -> list[Violation]:
+    """cover: supporter mission id -> [(on, off)] that may stand in for a supporter package missing from `items` (the
+    planner passes only supporters outside its scope); None = the committed plan's live packages (monitor, commit)."""
     out: list[Violation] = []
     ac_use: dict[int, list] = defaultdict(list)
     cr_use: dict[int, list] = defaultdict(list)
@@ -156,6 +160,28 @@ def validate(st: OpsState, items: list[ItemSpec], check_wx: bool = True) -> list
             k = next(it for it in items if it.base_id == bid)
             out.append(Violation(k.key, k.mission_id, "FUEL", f"{st.bases[bid].code}: needs {used:,.0f} L, {max(0, avail):,.0f} L above reserve",
                                  "base", bid))
+    # D41: a dependent package needs its supporter on station for its whole time on station (a supporter package in
+    # this list if there is one, else the committed plan's, as long as its sortie is still live)
+    deps = [it for it in items if "#" not in it.key and it.mission_id in st.missions and st.missions[it.mission_id].depends_on
+            and it.on_station and it.off_station]
+    if deps:
+        here: dict = {}
+        for o in items:
+            if "#" not in o.key and o.on_station and o.off_station:
+                here.setdefault(o.mission_id, []).append((o.on_station, o.off_station))
+        for it in deps:
+            s = st.missions[it.mission_id].depends_on
+            fam = st.family_of(s)
+            if any(x in here for x in fam):
+                covers = [w for x in fam for w in here.get(x, [])]
+            elif cover is not None:
+                covers = [w for x in fam for w in cover.get(x, [])]
+            else:
+                covers = [w for ws in st.cover_of(set(fam)).values() for w in ws]
+            if not any(on <= it.on_station and off >= it.off_station for on, off in covers):
+                sm = st.missions.get(s)
+                out.append(Violation(it.key, it.mission_id, "DEPENDENCY",
+                                     f"{sm.code if sm else s} not on station {it.on_station:%H:%M}–{it.off_station:%H:%M}Z", "mission", s))
     # weapons and QRA are concurrency limits: what is out at the same moment, checked at every start inside this
     # package's interval (the optimiser's rows use the same events), not the sum of everything that overlaps it
     for it in items:

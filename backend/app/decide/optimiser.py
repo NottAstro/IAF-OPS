@@ -129,13 +129,37 @@ class Base:
     rows: list
 
 
-def base_model(st: OpsState, cands_by_mission: dict, rows: list | None = None) -> Base:
+def base_model(st: OpsState, cands_by_mission: dict, rows: list | None = None, cover_fixed: dict | None = None) -> Base:
+    """cover_fixed: supporter mission id -> [(on, off)] of committed packages for supporters outside this solve (D41)."""
     allc = [c for cs in cands_by_mission.values() for c in cs]
     model = cp_model.CpModel()
     y = {c.idx: model.NewBoolVar(f"y{c.idx}") for c in allc}
     u = {m: model.NewBoolVar(f"u{m}") for m in st.missions}
     for mid in u:
         model.Add(sum(y[c.idx] for c in cands_by_mission.get(mid, [])) + u[mid] == 1)
+    # D42: the parts of a split mission are covered all or nothing (a relief chain with a gap is no cover)
+    groups: dict = defaultdict(list)
+    for mid, m in st.missions.items():
+        if m.parent is not None:
+            groups[m.parent].append(mid)
+    for kids in groups.values():
+        for a, b in zip(kids, kids[1:]):
+            model.Add(u[a] == u[b])
+    # D41: an option for a dependent mission is chosen only with a supporter option on station for its whole time
+    for mid, m in st.missions.items():
+        if not m.depends_on or not cands_by_mission.get(mid):
+            continue
+        fam = st.family_of(m.depends_on)
+        sup = [a for s in fam for a in cands_by_mission.get(s, [])]
+        fixed = [w for s in fam for w in (cover_fixed or {}).get(s, [])]
+        for c in cands_by_mission[mid]:
+            cov = [a for a in sup if a.on_station <= c.on_station and a.off_station >= c.off_station]
+            if any(on <= c.on_station and off >= c.off_station for on, off in fixed):
+                continue                           # a committed supporter package already covers it
+            if cov:
+                model.Add(y[c.idx] <= sum(y[a.idx] for a in cov))
+            else:
+                model.Add(y[c.idx] == 0)
     rows = rows if rows is not None else build_constraints(st, allc)
     for key, _, act, cap in rows:
         if act:
@@ -145,7 +169,8 @@ def base_model(st: OpsState, cands_by_mission: dict, rows: list | None = None) -
 
 def solve(st: OpsState, cands_by_mission: dict, preset: str = "BALANCED", forbid: set | None = None,
           fixed: dict | None = None, stability: dict | None = None, time_s: float = D.SOLVER_TIME_S,
-          workers: int = D.SOLVER_WORKERS, seed: int = 0, rows: list | None = None, base: Base | None = None) -> Solution:
+          workers: int = D.SOLVER_WORKERS, seed: int = 0, rows: list | None = None, base: Base | None = None,
+          cover_fixed: dict | None = None) -> Solution:
     """forbid: candidate idx never chosen. fixed: mission_id -> candidate idx that must be chosen (frozen items).
     stability: mission_id -> (base_id, type_id, launch) of the committed package; matching candidates get a bonus.
     rows / base: build_constraints() output, or the whole base model, when the caller re-solves the same candidates
@@ -153,7 +178,7 @@ def solve(st: OpsState, cands_by_mission: dict, preset: str = "BALANCED", forbid
     t0 = time.perf_counter()
     forbid, fixed, stability = forbid or set(), fixed or {}, stability or {}
     allc = [c for cs in cands_by_mission.values() for c in cs]
-    base = base or base_model(st, cands_by_mission, rows)
+    base = base or base_model(st, cands_by_mission, rows, cover_fixed)
     model = base.model.clone()
     y = {k: model.get_bool_var_from_proto_index(v.Index()) for k, v in base.y.items()}
     u = {k: model.get_bool_var_from_proto_index(v.Index()) for k, v in base.u.items()}

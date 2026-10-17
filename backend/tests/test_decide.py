@@ -237,6 +237,66 @@ def test_snag_risk_api_card_and_fleet():
     assert login("viewer").post("/api/v1/ops/models/snag-risk/train").status_code == 403
 
 
+def test_dependent_missions_fly_only_under_cover():
+    """D41: a barrier CAP that needs AEW&C is planned only inside its supporter's time on station; without the supporter
+    the validator flags it, and an uncovered dependent says why."""
+    st = snap()
+    res = plan(st)
+    items = {i["mission_id"]: i for i in res.items}
+    deps = [m for m in st.missions.values() if m.depends_on]
+    assert deps, "the seeded day has missions under AEW&C cover"
+    covered = [m for m in deps if m.id in items]
+    assert covered
+    for m in covered:
+        d = items[m.id]
+        sups = [items[x] for x in st.family_of(m.depends_on) if x in items]
+        assert any(s["on_station_ts"] <= d["on_station_ts"] and s["score"]["off_station"] >= d["score"]["off_station"] for s in sups), m.code
+        assert any(r["label"] == "Depends on" for r in d["explanation"]["rows"])
+    supporters = {m.depends_on for m in deps}
+    specs = [x for mid, c in res.selected.items() if mid not in supporters for x in P.specs(c, res.assignments[mid], str(mid))]
+    assert any(v.rule == "DEPENDENCY" and v.mission_id == covered[0].id for v in validate(st, specs))
+    st2 = st.clone()                          # the supporter is gone (cancelled): its dependent can't be covered
+    gone = covered[0].depends_on
+    st2.missions = {k: m for k, m in st2.missions.items() if k != gone}
+    res2 = plan(st2)
+    u = next(u for u in res2.unmet if u["mission_id"] == covered[0].id)
+    assert u["reasons"][0]["code"] == "NO_COVER" and u["fixes"][0]["kind"] == "COVER_SUPPORT"
+
+
+def test_split_missions_relief_and_bases():
+    """D42: a 6 h CAP no package can hold and a surge no base can launch get checked split fixes; applied, every part is
+    covered (reliefs hand over without a gap, base parts are on station together), and parts are covered all or nothing."""
+    from dataclasses import replace
+    res = plan(snap())
+    fixes = {f["kind"]: (u["mission_id"], f) for u in res.unmet for f in u["fixes"] if f["kind"].startswith("SPLIT_")}
+    assert {"SPLIT_RELIEF", "SPLIT_BASES"} <= set(fixes), fixes
+    air = login("airhq")
+    for mid, f in fixes.values():
+        r = air.post(f"/api/v1/ops/missions/{mid}/split", json={k: f[k] for k in ("kind", "parts", "t0", "sizes") if k in f})
+        assert r.status_code == 200, r.text
+    assert air.post(f"/api/v1/ops/missions/{fixes['SPLIT_RELIEF'][0]}/split", json=fixes["SPLIT_RELIEF"][1]).status_code == 409
+    with SessionLocal() as db:
+        st = S.build(db)
+    res = plan(st)
+    items = {i["mission_id"]: i for i in res.items}
+    for kind in ("RELIEF", "BASES"):
+        parts = sorted((m for m in st.missions.values() if m.part and m.part[2] == kind), key=lambda m: m.part[0])
+        assert len(parts) >= 2 and all(m.id in items for m in parts), [(m.code, m.id in items) for m in parts]
+        got = [items[m.id] for m in parts]
+        if kind == "RELIEF":
+            for a, b in zip(got, got[1:]):     # the next relief is on station before the previous one leaves
+                assert b["on_station_ts"].isoformat() <= a["score"]["off_station"]
+        else:
+            assert len({g["on_station_ts"] for g in got}) == 1 and len({g["base_id"] for g in got}) == len(got)
+            assert sum(g["n_aircraft"] for g in got) == sum(m.required for m in parts)
+        assert any(r["label"] == "Part of" for r in got[0]["explanation"]["rows"])
+    st2 = st.clone()                          # one relief can't be flown: the other is dropped too
+    rel = [m for m in st2.missions.values() if m.part and m.part[2] == "RELIEF"]
+    st2.missions[rel[-1].id] = replace(rel[-1], window_end=rel[-1].window_start + timedelta(minutes=1))
+    res2 = plan(st2)
+    assert not {m.id for m in rel} & {i["mission_id"] for i in res2.items}
+
+
 def test_scenario_injects_apply_exactly_once():
     """Regression: the JSONB inject list was mutated in place, so applied_at never saved and injects re-fired."""
     from app import models as M
@@ -279,6 +339,32 @@ def test_commit_repairs_or_skips_instead_of_failing():
     with SessionLocal() as db:
         assert not db.execute(text("""SELECT count(*) FROM sortie_aircraft sa JOIN sortie s ON s.id = sa.sortie_id
                                       WHERE sa.aircraft_id = :a AND s.status = 'PLANNED'"""), {"a": victim}).scalar()
+
+
+def test_losing_the_supporter_replans_its_dependents():
+    """D41: when the AEW&C sortie is lost, the re-task proposal re-plans it together with its barrier CAP and never keeps
+    the CAP without cover (a new AEW&C package over the unchanged CAP is the smallest repair)."""
+    with SessionLocal() as db:
+        row = db.execute(text("""SELECT pa.sortie_id, pa.mission_id FROM plan_item pa
+                                 JOIN plan p ON p.id = pa.plan_id AND p.status = 'COMMITTED'
+                                 JOIN mission d ON d.depends_on_id = pa.mission_id
+                                 JOIN plan_item pd ON pd.plan_id = pa.plan_id AND pd.mission_id = d.id AND pd.status = 'COMMITTED'
+                                 JOIN sortie s ON s.id = pa.sortie_id AND s.status = 'PLANNED'
+                                 WHERE pa.status = 'COMMITTED' ORDER BY pa.id LIMIT 1""")).first()
+        assert row, "the committed plan has an AEW&C package with a dependent CAP"
+        deps = [r[0] for r in db.execute(text("SELECT id FROM mission WHERE depends_on_id = :m"), {"m": row.mission_id})]
+        db.execute(text("UPDATE sortie SET status = 'CANCELLED', cancel_reason = 'AIRCRAFT_US' WHERE id = :s"), {"s": row.sortie_id})
+        db.commit()
+    air = login("airhq")
+    out = air.post("/api/v1/ops/disruptions/check").json()
+    assert out["proposal"], out
+    prop = air.get(f"/api/v1/ops/plans/{out['proposal']['plan_id']}").json()
+    items = {i["mission"]["id"]: i for i in prop["items"]}
+    for d in deps:
+        if d in items:
+            s = items.get(row.mission_id)
+            assert s and s["on_station_ts"] <= items[d]["on_station_ts"] and \
+                s["score"]["off_station"] >= items[d]["score"]["off_station"], "a dependent CAP was kept without AEW&C cover"
 
 
 def test_commit_then_retask_a_runway_closure():
@@ -373,3 +459,68 @@ def test_inflight_rerole_for_an_urgent_popup():
         assert db.execute(text("SELECT status FROM mission WHERE id = :m"), {"m": row.mission_id}).scalar() in ("APPROVED", "COMPLETED")
         assert db.execute(text("SELECT status FROM mission WHERE id = :m"), {"m": s.mission_id}).scalar() == "ACTIVE"
     assert air.post("/api/v1/ops/disruptions/check").json()["proposal"] is None
+
+
+def test_manual_planning_baseline():
+    """D43 / PS-8: a timed manual session; the real rules judge each pick (a base that can't reach is rejected with a
+    reason), and finishing stores the manual result beside the optimiser's on the same snapshot."""
+    from app.geo import dist_km
+    air = login("airhq")
+    r = air.post("/api/v1/ops/manual")
+    assert r.status_code == 201, r.text
+    s = r.json()
+    from app.decide import store
+    with SessionLocal() as db:                # what a careful planner would pick: the optimiser's own choices
+        ref = P.plan(S.build(db, release_sortie_ids=store._releasable(db)), workers=1, seed=0)
+    picks = [{"mission_id": i["mission_id"], "base_id": i["base_id"], "type_id": i["aircraft_type_id"],
+              "on_station": i["on_station_ts"].isoformat()} for i in ref.items if not i.get("support")][:5]
+    picked = {p["mission_id"] for p in picks}
+    ms = [m for m in s["missions"] if m["options"] and m["mission_id"] not in picked]
+    far = lambda m: max(m["options"], key=lambda o: dist_km((m["lon"], m["lat"]), _base_xy(o["base_id"])))  # noqa: E731
+    bad = {"mission_id": ms[0]["mission_id"], "base_id": far(ms[0])["base_id"], "type_id": far(ms[0])["type_id"]}
+    chk = air.post(f"/api/v1/ops/manual/{s['id']}/check", json={"picks": picks + [bad]}).json()
+    assert chk["covered"] == len(picks) and chk["missions"] == len(s["missions"]), chk["rows"]
+    assert chk["rows"][str(bad["mission_id"])]["ok"] is False and chk["rows"][str(bad["mission_id"])]["reason"]
+    fin = air.post(f"/api/v1/ops/manual/{s['id']}/finish", json={"picks": picks}).json()
+    assert fin["optimiser"]["covered"] >= fin["manual"]["covered"] and fin["checks"] == 1 and fin["elapsed_s"] >= 0
+    assert air.post(f"/api/v1/ops/manual/{s['id']}/check", json={"picks": picks}).status_code == 409
+    assert any(x["id"] == s["id"] for x in air.get("/api/v1/ops/manual").json()["items"])
+    with SessionLocal() as db:                # a test run is not a human baseline: never let it reach the benchmark report
+        db.execute(text("DELETE FROM manual_session WHERE id = :i"), {"i": s["id"]})
+        db.commit()
+
+
+def _base_xy(bid: int) -> tuple:
+    with SessionLocal() as db:
+        return tuple(db.execute(text("SELECT ST_X(geom), ST_Y(geom) FROM base WHERE id = :i"), {"i": bid}).one())
+
+
+def test_public_airspace_import():
+    """D44: OpenAIP items map to planner zones: a prohibited area across a route blocks it, a terminal area adds civil
+    traffic, FIRs are skipped, and a re-import replaces the last one (synthetic zones stay)."""
+    from app.decide import airspace_import as AI, feasibility as F, risk as R, traffic as TR
+    st = snap()
+    c = next(c for cs in F.generate(st.clone(), "BALANCED")[0].values() for c in cs if len(c.route) >= 2)
+    (x0, y0), (x1, y1) = c.route[0], c.route[1]
+    mx, my = (x0 + x1) / 2, (y0 + y1) / 2
+    sq = lambda x, y, d: {"type": "Polygon", "coordinates": [[[x - d, y - d], [x + d, y - d], [x + d, y + d], [x - d, y + d], [x - d, y - d]]]}  # noqa: E731
+    items = [{"_id": "test-prohibited-1", "name": "TEST prohibited", "type": 3, "geometry": sq(mx, my, 0.05),
+              "lowerLimit": {"value": 0, "unit": 1}, "upperLimit": {"value": 100, "unit": 6}},
+             {"_id": "test-ctr-1", "name": "TEST CTR", "type": 4, "geometry": sq(mx + 1.0, my, 0.3)},
+             {"_id": "test-fir-1", "name": "TEST FIR", "type": 10, "geometry": sq(mx, my, 3)}]
+    with SessionLocal() as db:
+        before = db.execute(text("SELECT count(*) FROM airspace_zone WHERE code NOT LIKE 'OAIP-%'")).scalar()
+        assert AI.run(db, items) == {"RESTRICTED": 1, "DANGER": 0, "CIVIL_TERMINAL": 1}
+        assert AI.run(db, items[:1]) == {"RESTRICTED": 1, "DANGER": 0, "CIVIL_TERMINAL": 0}   # replaces, never duplicates
+        AI.run(db, items)
+        z = db.execute(text("SELECT upper_m, source FROM airspace_zone WHERE code = 'OAIP-test-prohibited-1'")).one()
+        assert round(z.upper_m) == 3048 and z.source == "PUBLIC"
+        st2 = S.build(db)
+        try:
+            assert R.restricted_hit(st2, c.route, c.launch, c.recovery) is not None
+            assert TR.build(db).density(mx + 1.0, my, 0.0)[0] >= TR.TERMINAL_WEIGHT
+        finally:
+            db.execute(text("DELETE FROM airspace_zone WHERE code LIKE 'OAIP-%'"))
+            db.commit()
+            TR._STATIC.clear()
+        assert db.execute(text("SELECT count(*) FROM airspace_zone")).scalar() == before

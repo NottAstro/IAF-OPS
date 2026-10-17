@@ -165,10 +165,13 @@ export interface MissionRow {
   command: string | null; lon: number; lat: number; target_base: string | null; target_base_id: number | null;
   plan_id: number | null; item_id: number | null; tasked_base: string | null; tasked_type: string | null; tasked_n: number | null;
   tasked_launch: string | null; sortie_code: string | null; sortie_status: string | null; simulated: boolean;
+  depends_on_id: number | null; depends_on: string | null;                                       // D41
+  parent_mission_id: number | null; parent_code: string | null; part_no: number | null; parts: number | null;
+  split_kind: "RELIEF" | "BASES" | null;                                                          // D42
 }
 
 export interface Reason { code: string; text: string; count: number; examples: string[]; nearest_km?: number }
-export interface Fix { kind: string; text: string }
+export interface Fix { kind: string; text: string; parts?: number; t0?: string; sizes?: number[] }   // SPLIT_* fixes can be applied (D42)
 export interface ExplRow { label: string; value: string; note?: string; tone?: string }
 
 export interface PlanMission {

@@ -42,6 +42,14 @@ for the simulator, generic threats and loadouts, COMMAND_HQ approves, 24 h / 15 
 - **Re-task proposals:** 1–400 ms over a live ×60 exercise with 14 disruptions. Runway closure dropped only the package with no alternative; a weather forecast drop moved one package and swapped one crew for an instrument-rated one; a Su-30MKI grounding was fixed by five tail swaps; a pop-up P1 casualty evacuation was tasked from Leh.
 - **Soak:** 4 simulated hours at ×60 with `SIM_ASSERT=1` gave 0 invariant violations. Plan sorties launched, flew and recovered; missions were marked MET.
 
+| Phase after that (D41–D44) | Done: AEW&C support dependencies (optimiser link rows, validator `DEPENDENCY`, joint re-tasking); split missions as reliefs or parts from several bases, offered as checked fixes and applied by a person, covered all or nothing; manual planning baseline (timed sessions judged by the real rules, beside the optimiser, exported to the benchmark); optional OpenAIP airspace import; fill pass with displacement; launch-rate rejection in feasibility; helicopter packages of 4+ crewable | `decide/split.py`, `manual.py`, `airspace_import.py`, `optimiser.py`, `planner.py`, `features/manual.tsx` |
+
+**Measured after D41–D44 ([BENCHMARK](BENCHMARK.md), same harness; each seeded day now also has a 6 h CAP and a flood-relief surge, split with the checked fixes first):**
+- **Plans:** 90.3 % of missions covered on normal days (P1 91 %), 0 violations in 35 plans, deterministic 7 of 7; the seeded day plans in 4.3 s, normal days 2.4–9.3 s cold. CP-SAT matches or beats greedy in all 7 runs (better in 2, worse in 0); the surge day (154 missions) covers 131 vs 129 in 28 s.
+- **Re-task proposals:** runway closure 0.7–3.9 s (mean 2.8 s), 80 % of the plan untouched; pop-up P1 0.3–0.7 s.
+- **Split missions:** the seeded 6 h CAP is flown as two Su-30MKI reliefs from Halwara (08:00–11:15 and 11:00–14:00Z); the 16-helicopter flood surge as 8 Dhruv from Sarsawa plus 8 Mi-17V-5 from Hindan, on station together.
+- **Manual baseline:** the tool is ready (Planner → Manual baseline); no human sessions recorded yet, so BENCHMARK.md says so.
+
 **Measured in the next phase ([BENCHMARK](BENCHMARK.md): 3 seeds × 2 epochs + a 2.5× surge day, simulated data):**
 - **Plans:** 93.1 % of missions covered on normal days, 0 validator violations in 35 plans, identical plan on a second run in 7 of 7. Total 1.6–5.4 s with a cold route cache (FR-PLN-07 target < 10 s); solve 0.3–1.1 s.
 - **Optimiser vs greedy** on the same candidates: CP-SAT matches or beats greedy in every run (better in 3 of 7, +4 missions), including the surge day (123 vs 121 of 144, +2 P2). The surge day plans in 14–19 s.
@@ -49,11 +57,11 @@ for the simulator, generic threats and loadouts, COMMAND_HQ approves, 24 h / 15 
 - **Snag-risk model:** held-out AUC 0.74 against a ceiling of 0.76 (the simulator's own law) and 0.68 for an hours-since-maintenance rule; calibrated by tenth; top 10 % riskiest tails see 3.4× the average defect rate. The simulator's defect rate is ~5–6 % per tail-sortie (20 % found pre-flight, 20 % in flight, 60 % post-flight).
 - **Soak:** 30 simulated hours at ×90 with `SIM_ASSERT=1` and the new defect stages: 0 invariant violations; every pre-flight defect was covered by a spare tail.
 
-**Still open (cut list order):**
-- public airspace import
-- AEW dependencies (tankers are done) and split missions
-- the manual planning baseline (team task) to set beside the greedy baseline
+**Still open:**
+- run manual planning sessions with real planners (team task; the tool and the report section are ready)
+- an OpenAIP key (or export) to load published airspace; synthetic zones are used until then
 - organiser sign-off on the generic threat bands and loadouts (§17 rows 2–3)
+- waves: one package launching over several slots (today a package launches in one 15-minute slot; bigger ones are split across bases)
 
 ---
 

@@ -78,16 +78,43 @@ def greedy(st, preset: str) -> dict:
             acc += sp
             covered[m.id] = c
             break
+    groups: dict = {}                            # same rule as the planner: parts of a split mission all or nothing (D42)
+    for mid, m in st.missions.items():
+        if m.parent is not None:
+            groups.setdefault(m.parent, []).append(mid)
+    for kids in groups.values():
+        if not all(k in covered for k in kids):
+            for k in kids:
+                covered.pop(k, None)
     by = {p: 0 for p in ("P1", "P2", "P3", "P4")}
     for mid in covered:
         by[st.missions[mid].priority] += 1
     return {"covered": len(covered), "by": by, "ms": int((time.perf_counter() - t0) * 1000)}
 
 
+def apply_splits() -> int:
+    """Plan once and apply every checked split fix offered (reliefs, parts from several bases). -> splits applied."""
+    from datetime import datetime as _dt
+    from .db import SessionLocal
+    from .decide import planner as P, snapshot as S, split as SP
+    from . import models as M
+    with SessionLocal() as db:
+        res = P.plan(S.build(db), "BALANCED", workers=1, seed=0)
+        n = 0
+        for u in res.unmet:
+            f = next((f for f in u["fixes"] if f["kind"].startswith("SPLIT_")), None)
+            if f:
+                SP.apply(db, USER, db.get(M.Mission, u["mission_id"]), f["kind"], f["parts"], _dt.fromisoformat(f["t0"]), f.get("sizes"))
+                n += 1
+        db.commit()
+    return n
+
+
 def run_one(seed: int, epoch: str, scale: float = 1.0) -> tuple[list, list]:
     from .db import SessionLocal
     from .decide import exercise as EX, monitor, planner as P, snapshot as S, store
     rows, rt = [], []
+    splits = apply_splits()                      # as a planner would: apply the checked split fixes first (D42)
     with SessionLocal() as db:
         t0 = time.perf_counter()
         st = S.build(db)
@@ -98,7 +125,7 @@ def run_one(seed: int, epoch: str, scale: float = 1.0) -> tuple[list, list]:
         res = P.plan(st.clone(), preset, workers=1, seed=0)
         k = res.kpis
         plans[preset] = res
-        rows.append({"seed": seed, "epoch": epoch, "scale": scale, "method": f"CP-SAT {preset}", "missions": k["missions"], "covered": k["covered"],
+        rows.append({"seed": seed, "epoch": epoch, "scale": scale, "splits": splits, "method": f"CP-SAT {preset}", "missions": k["missions"], "covered": k["covered"],
                      **{f"{p}_cov": k["by_priority"][p]["covered"] for p in of}, **{f"{p}_of": of[p] for p in of},
                      "solve_ms": k["solve_ms"], "total_ms": res.total_ms, "build_ms": build_ms, "violations": k["violations"],
                      "sorties": k["sorties"], "tankers": k.get("tanker_sorties", 0), "flying_h": k["flying_hours"], "fuel_kl": round(k["fuel_l"] / 1000, 1),
@@ -163,7 +190,65 @@ def _table(rows: list, q) -> list:
     return out
 
 
-def report(rows: list, rt: list, seeds: list, epochs: list, wall_s: float) -> str:
+MANUAL_COLS = ["id", "started_at", "planner", "sim_time", "missions", "checks", "elapsed_s", "manual_covered", "manual_p1",
+               "manual_p2", "optimiser_covered", "optimiser_p1", "optimiser_p2", "optimiser_ms"]
+
+
+def manual_sessions() -> list[dict]:
+    """Finished manual planning sessions (D43) from the database, merged into docs/manual_sessions.csv, which outlives
+    reseeds (this harness and Admin → Regenerate both wipe the database)."""
+    from .db import SessionLocal
+    path = DOCS / "manual_sessions.csv"
+    rows = {}
+    if path.exists():
+        with open(path, encoding="utf-8") as f:
+            rows = {(r["id"], r["started_at"]): r for r in csv.DictReader(f)}
+    try:
+        with SessionLocal() as db:
+            for r in db.execute(text("""SELECT ms.id, ms.started_at, ms.sim_time, ms.missions, ms.checks, ms.result, u.display_name
+                                        FROM manual_session ms LEFT JOIN app_user u ON u.id = ms.user_id
+                                        WHERE ms.finished_at IS NOT NULL AND ms.result IS NOT NULL""")):
+                res = r.result
+                man, opt = res["manual"], res["optimiser"]
+                rows[(str(r.id), r.started_at.isoformat())] = {
+                    "id": r.id, "started_at": r.started_at.isoformat(), "planner": r.display_name, "sim_time": r.sim_time.isoformat(),
+                    "missions": r.missions, "checks": r.checks, "elapsed_s": res["elapsed_s"], "manual_covered": man["covered"],
+                    "manual_p1": man["by_priority"]["P1"]["covered"], "manual_p2": man["by_priority"]["P2"]["covered"],
+                    "optimiser_covered": opt["covered"], "optimiser_p1": opt["by_priority"]["P1"]["covered"],
+                    "optimiser_p2": opt["by_priority"]["P2"]["covered"], "optimiser_ms": opt["total_ms"]}
+    except Exception:                            # no table yet (older database): keep what the CSV has
+        pass
+    out = sorted(rows.values(), key=lambda r: str(r["started_at"]))
+    if out:
+        DOCS.mkdir(exist_ok=True)
+        with open(path, "w", newline="", encoding="utf-8") as f:
+            w = csv.DictWriter(f, fieldnames=MANUAL_COLS)
+            w.writeheader()
+            w.writerows(out)
+    return out
+
+
+def _manual_section(ms: list[dict]) -> list[str]:
+    out = ["", "## Manual planning baseline (PS-8)", ""]
+    if not ms:
+        return out + ["No manual sessions recorded yet. Run one from Planner → Manual baseline (a planner plans the same snapshot "
+                      "by hand against the clock, the real rules judge it, and the optimiser plans it too); this report then "
+                      "includes the results. Sessions are kept in `docs/manual_sessions.csv`.", ""]
+    n = len(ms)
+    f = lambda k: [float(r[k]) for r in ms]  # noqa: E731
+    out += [f"{n} session(s). By hand: mean {statistics.mean(f('elapsed_s')) / 60:.1f} min to plan, "
+            f"{statistics.mean(f('manual_covered')):.1f} missions covered on average; optimiser on the same snapshots: "
+            f"{statistics.mean(f('optimiser_ms')) / 1000:.1f} s, {statistics.mean(f('optimiser_covered')):.1f} covered.", "",
+            "| Started | Planner | Missions | Time by hand | Optimiser time | Covered by hand / optimiser | P1 | P2 | Checks |",
+            "|---|---|---:|---:|---:|---:|---:|---:|---:|"]
+    for r in ms:
+        out.append(f"| {str(r['started_at'])[:16]} | {r['planner'] or '—'} | {r['missions']} | {float(r['elapsed_s']) / 60:.1f} min | "
+                   f"{float(r['optimiser_ms']) / 1000:.1f} s | {r['manual_covered']} / {r['optimiser_covered']} | "
+                   f"{r['manual_p1']} / {r['optimiser_p1']} | {r['manual_p2']} / {r['optimiser_p2']} | {r['checks']} |")
+    return out + [""]
+
+
+def report(rows: list, rt: list, seeds: list, epochs: list, wall_s: float, manual: list | None = None) -> str:
     import ortools
     q = lambda xs, f=0.95: sorted(xs)[min(len(xs) - 1, int(f * len(xs)))] if xs else 0  # noqa: E731
     out = ["# Benchmark — decision support (Phase 2)", "",
@@ -173,7 +258,9 @@ def report(rows: list, rt: list, seeds: list, epochs: list, wall_s: float) -> st
            f"Machine: {platform.processor() or platform.machine()}, {os.cpu_count()} logical CPUs, Python {platform.python_version()}, "
            f"OR-Tools {ortools.__version__}; solver with 1 worker and a fixed seed (deterministic).", "",
            "## Planner by preset (normal days)", "",
-           "The first preset of each run also pays for warming the route cache, so its total time is the cold-start figure."]
+           "The first preset of each run also pays for warming the route cache, so its total time is the cold-start figure. "
+           "Missions no single package can fly (each seeded day has a 6 h CAP and a flood-relief surge) are first split with "
+           "the planner's checked fixes, as a planner would (D42); coverage counts each part as a mission."]
     normal = [r for r in rows if r.get("scale", 1.0) == 1.0]
     surge = [r for r in rows if r.get("scale", 1.0) != 1.0]
     out += [""] + _table(normal, q)
@@ -212,7 +299,25 @@ def report(rows: list, rt: list, seeds: list, epochs: list, wall_s: float) -> st
     out += ["", "Target (PRD NFR): a re-task proposal within 15 s of a disruption. \"Packages kept\" is the share of the committed "
             "plan the proposal leaves untouched (higher is more stable).", "",
             "Raw rows: `docs/benchmark.csv` (planner) and `docs/benchmark_retask.csv` (re-tasking).", ""]
+    out += _manual_section(manual or [])
     return "\n".join(out)
+
+
+def _load(path: Path) -> list[dict]:
+    """A benchmark CSV back as typed rows (numbers, booleans, empty -> None)."""
+    def cast(v: str):
+        if v == "":
+            return None
+        if v in ("True", "False"):
+            return v == "True"
+        for f in (int, float):
+            try:
+                return f(v)
+            except ValueError:
+                pass
+        return v
+    with open(path, encoding="utf-8") as f:
+        return [{k: cast(v) for k, v in r.items()} for r in csv.DictReader(f)]
 
 
 def main() -> None:
@@ -220,10 +325,19 @@ def main() -> None:
     ap.add_argument("--seeds", default=",".join(map(str, SEEDS)))
     ap.add_argument("--epochs", default=",".join(EPOCHS))
     ap.add_argument("--quick", action="store_true")
+    ap.add_argument("--report-only", action="store_true", help="rebuild BENCHMARK.md from the CSVs of the last run")
     a = ap.parse_args()
+    if a.report_only:
+        rows, rt = _load(DOCS / "benchmark.csv"), _load(DOCS / "benchmark_retask.csv")
+        seeds = list(dict.fromkeys(int(r["seed"]) for r in rows))
+        epochs = list(dict.fromkeys(r["epoch"] for r in rows))
+        (DOCS / "BENCHMARK.md").write_text(report(rows, rt, seeds, epochs, 0, manual_sessions()), encoding="utf-8")
+        print(f"wrote {DOCS / 'BENCHMARK.md'} from the CSVs")
+        return
     seeds = [int(x) for x in a.seeds.split(",")][:1 if a.quick else None]
     epochs = a.epochs.split(",")[:1 if a.quick else None]
     t0 = time.perf_counter()
+    ms = manual_sessions()                       # before the first reseed wipes them
     rows, rt = [], []
     runs = [(s, e, 1.0) for s in seeds for e in epochs] + [(seeds[0], epochs[0], SURGE)]
     try:
@@ -248,7 +362,7 @@ def main() -> None:
         w = csv.DictWriter(f, fieldnames=list(rt[0]))
         w.writeheader()
         w.writerows(rt)
-    (DOCS / "BENCHMARK.md").write_text(report(rows, rt, seeds, epochs, time.perf_counter() - t0), encoding="utf-8")
+    (DOCS / "BENCHMARK.md").write_text(report(rows, rt, seeds, epochs, time.perf_counter() - t0, ms), encoding="utf-8")
     print(f"wrote {DOCS / 'BENCHMARK.md'}")
 
 

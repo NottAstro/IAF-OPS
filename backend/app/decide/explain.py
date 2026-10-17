@@ -36,6 +36,7 @@ def _fix(st, m, code, where, near) -> dict | None:
         "FUEL_SHORT": f"Bring the fuel delivery to {where} forward",
         "RUNWAY_CLOSED": f"Wait for the runway at {where} to reopen, or use another base",
         "NOT_ENOUGH_AIRCRAFT": f"Detach aircraft to {where}",
+        "LAUNCH_RATE": "Split the package across bases, or into waves",
         "AIRSPACE_RESTRICTED": "Request a corridor through the restricted area",
         "LOADOUT_INCOMPATIBLE": "Choose a loadout the eligible types can carry",
         "NO_ELIGIBLE_TYPE": "Widen the eligible aircraft roles",
@@ -93,6 +94,17 @@ def explain_item(st: OpsState, c: Candidate, mission_cands: list[Candidate], sol
                              f"receiver crews AAR-qualified", "tone": "info"})
     if c.req.quals - {"NIGHT", "NVG"}:
         rows.append({"label": "Qualifications", "value": c.req.label(), "note": "required by the mission"})
+    if m.part:                                # D42: one part of a split mission
+        k, n, kind = m.part
+        rows.append({"label": "Part of", "value": f"{m.code.rsplit('/', 1)[0]}: {'relief' if kind == 'RELIEF' else 'part'} {k} of {n}",
+                     "note": (f"on station {m.window_start:%H:%M}–{m.window_end:%H:%M}Z, hands over to the next relief"
+                              if kind == "RELIEF" and k < n else f"on station {m.window_start:%H:%M}–{m.window_end:%H:%M}Z"
+                              + (" with the other parts" if kind == "BASES" else "")), "tone": "info"})
+    if m.depends_on:                          # D41: who covers it
+        cov = _cover(st, m, c, sol)
+        sm = st.missions.get(m.depends_on)
+        rows.append({"label": "Depends on", "value": f"{sm.code if sm else m.depends_on} ({sm.mission_type.replace('_', ' ').lower() if sm else 'support'})",
+                     "note": cov or "covered by the committed plan", "tone": "info"})
     tr = c.traffic
     if tr and tr["level"] != "light":
         where = tr.get("airport") and f"{tr['airport']} terminal area"
@@ -167,11 +179,29 @@ def alternatives(st: OpsState, c: Candidate, mission_cands: list[Candidate], sol
     return out
 
 
+def _cover(st: OpsState, m, c: Candidate, sol: Solution) -> str | None:
+    """The chosen supporter package on station over c's time on station, in words (D41)."""
+    for s in st.family_of(m.depends_on):
+        a = sol.selected.get(s)
+        if a and a.on_station <= c.on_station and a.off_station >= c.off_station:
+            return f"{st.types[a.type_id].name} from {st.bases[a.base_id].code}, on station {a.on_station:%H:%M}–{a.off_station:%H:%M}Z"
+    return None
+
+
 def explain_unmet(st: OpsState, mid: int, cands: list[Candidate], rejects: list[Rejection], sol: Solution,
                   assign_fail: str | None = None) -> tuple[list, list]:
     m = st.missions[mid]
     reasons, fixes = [], []
     used = _usage(sol)
+    if m.depends_on and cands and not any(_cover(st, m, c, sol) for c in cands):
+        sm = st.missions.get(m.depends_on)
+        fam = st.family_of(m.depends_on)
+        chosen = [sol.selected[s] for s in fam if s in sol.selected]
+        ex = [f"{sm.code if sm else m.depends_on} ({sm.priority if sm else '?'}) " +
+              (f"on station {chosen[0].on_station:%H:%M}–{chosen[0].off_station:%H:%M}Z only" if chosen else "isn't covered in this plan")]
+        reasons.append({"code": "NO_COVER", "text": REASON_TEXT["NO_COVER"], "count": len(cands), "examples": ex})
+        fixes.append({"kind": "COVER_SUPPORT", "text": f"Cover {sm.code if sm else 'the support mission'} first (raise its priority), "
+                      f"or fly without AEW&C cover (remove the dependency)"})
     if assign_fail:
         reasons.append({"code": "ASSIGNMENT_FAILED", "text": REASON_TEXT["ASSIGNMENT_FAILED"], "count": 1, "examples": [assign_fail]})
     if cands:
@@ -216,4 +246,7 @@ def explain_unmet(st: OpsState, mid: int, cands: list[Candidate], rejects: list[
                 fixes.append(f)
     if not reasons:
         reasons.append({"code": "NO_OPTION", "text": "No base can fly this mission in the horizon", "count": 0, "examples": []})
+    if not cands and rejects:                 # D42: a checked split, first: it is the fix that keeps the mission whole
+        from .split import proposals
+        fixes = proposals(st, m, rejects) + fixes
     return reasons, fixes

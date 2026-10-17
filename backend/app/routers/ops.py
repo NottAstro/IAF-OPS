@@ -45,8 +45,10 @@ MISSION_SQL = """SELECT m.id, m.code, m.name, m.mission_type, m.priority, m.stat
        m.on_station_achieved_min, m.requesting_command_id, c.code AS command, ST_X(m.target_geom) AS lon,
        ST_Y(m.target_geom) AS lat, tb.code AS target_base, m.target_base_id, m.created_at, m.approved_at,
        pi.id AS item_id, pi.plan_id, b.code AS tasked_base, t.name AS tasked_type, pi.n_aircraft AS tasked_n,
-       pi.launch_ts AS tasked_launch, s.code AS sortie_code, s.status AS sortie_status, m.is_simulated AS simulated
+       pi.launch_ts AS tasked_launch, s.code AS sortie_code, s.status AS sortie_status, m.is_simulated AS simulated,
+       m.depends_on_id, dm.code AS depends_on, m.parent_mission_id, pm.code AS parent_code, m.part_no, m.parts, m.split_kind
 FROM mission m LEFT JOIN command c ON c.id = m.requesting_command_id LEFT JOIN base tb ON tb.id = m.target_base_id
+LEFT JOIN mission dm ON dm.id = m.depends_on_id LEFT JOIN mission pm ON pm.id = m.parent_mission_id
 LEFT JOIN plan_item pi ON pi.mission_id = m.id AND pi.status = 'COMMITTED'
      AND pi.plan_id = (SELECT id FROM plan WHERE status = 'COMMITTED' AND kind <> 'WHATIF' ORDER BY id DESC LIMIT 1)
 LEFT JOIN base b ON b.id = pi.base_id LEFT JOIN aircraft_type t ON t.id = pi.aircraft_type_id
@@ -101,10 +103,22 @@ class MissionIn(BaseModel):
     max_risk: str = "MED"
     notes: str | None = None
     command_id: int | None = None
+    depends_on_id: int | None = None          # D41: e.g. the AEW&C orbit this CAP needs
+
+
+def _check_dependency(db: Session, dep_id: int | None, self_id: int | None, errs: dict) -> None:
+    if not dep_id:
+        return
+    d = db.get(M.Mission, dep_id)
+    if not d or d.id == self_id or d.status in ("CANCELLED", "COMPLETED"):
+        errs["depends_on_id"] = "Pick a live mission"
+    elif d.depends_on_id:
+        errs["depends_on_id"] = "That mission depends on another one itself (one level only)"
 
 
 def _validate_mission(db: Session, body: MissionIn) -> tuple:
     errs = {}
+    _check_dependency(db, body.depends_on_id, None, errs)
     if body.mission_type not in D.MISSION_TEMPLATES and body.mission_type not in M.MISSION_TYPES:
         errs["mission_type"] = "Choose a mission type"
     if body.priority not in D.PRIORITIES:
@@ -156,7 +170,8 @@ def create_mission(body: MissionIn, request: Request, user: dict = Depends(requi
                   required_aircraft=body.required_aircraft or (tpl[2][0] if tpl else 2),
                   eligible_roles=body.eligible_roles or (tpl[1] if tpl else None), loadout_code=body.loadout_code,
                   on_station_min=body.on_station_min or (tpl[3] if tpl else 60), min_quals=body.min_quals, max_risk=body.max_risk,
-                  notes=body.notes, requested_by=user["id"], approved_by=user["id"] if approved else None,
+                  notes=body.notes, depends_on_id=body.depends_on_id,
+                  requested_by=user["id"], approved_by=user["id"] if approved else None,
                   approved_at=datetime.now().astimezone() if approved else None, is_simulated=True, source="SYNTHETIC")
     db.add(m)
     db.flush()
@@ -176,6 +191,7 @@ class MissionPatch(BaseModel):
     on_station_min: int | None = None
     max_risk: str | None = None
     notes: str | None = None
+    depends_on_id: int | None = None          # 0 removes the dependency
 
 
 def _mission_scope(user: dict, m: M.Mission) -> None:
@@ -198,6 +214,12 @@ def patch_mission(mid: int, body: MissionPatch, request: Request, user: dict = D
     fields = {k: v for k, v in body.model_dump(exclude={"version"}).items() if v is not None}
     if "priority" in fields and fields["priority"] not in D.PRIORITIES or "max_risk" in fields and fields["max_risk"] not in D.RISK_LEVELS:
         raise HTTPException(422, "Invalid priority or risk level")
+    if "depends_on_id" in fields:
+        errs: dict = {}
+        _check_dependency(db, fields["depends_on_id"] or None, m.id, errs)
+        if errs:
+            raise HTTPException(422, {"message": "Check the highlighted fields.", "fields": errs})
+        fields["depends_on_id"] = fields["depends_on_id"] or None
     before = {k: getattr(m, k) for k in fields}
     for k, v in fields.items():
         setattr(m, k, v)
@@ -205,11 +227,41 @@ def patch_mission(mid: int, body: MissionPatch, request: Request, user: dict = D
         raise HTTPException(422, {"message": "Window must be at least 15 minutes long", "fields": {"window_end": "Too short"}})
     m.version += 1
     if m.status in ("PLANNED", "TASKED") and set(fields) & {"window_start", "window_end", "required_aircraft", "on_station_min",
-                                                             "priority", "max_risk"}:
+                                                             "priority", "max_risk", "depends_on_id"}:
         m.approved_at = datetime.now().astimezone()      # the monitor re-checks the committed package against it
     audit(db, user, "UPDATE", "mission", m.id, None, before, fields, request_id=request.state.request_id)
     db.commit()
     return {"ok": True, "version": m.version}
+
+
+class SplitIn(BaseModel):
+    kind: str                                  # SPLIT_RELIEF / SPLIT_BASES (the fix kinds)
+    parts: int
+    t0: datetime
+    sizes: list[int] | None = None
+
+
+@router.post("/missions/{mid}/split")
+def split_mission(mid: int, body: SplitIn, request: Request, user: dict = Depends(require(*PLANNERS)), db: Session = Depends(get_db)):
+    """D42: cover one mission with several packages (reliefs in time, or parts from different bases). Audited."""
+    from ..decide import split as SP
+    m = db.get(M.Mission, mid, with_for_update=True)
+    if not m:
+        raise HTTPException(404, "Mission not found")
+    _mission_scope(user, m)
+    if m.status not in ("APPROVED", "PLANNED") or m.parent_mission_id:
+        raise HTTPException(409, "Only an approved mission that isn't tasked (and isn't itself a part) can be split.")
+    if body.kind not in ("SPLIT_RELIEF", "SPLIT_BASES") or not 2 <= body.parts <= D.SPLIT_MAX_PARTS:
+        raise HTTPException(422, f"Split into 2–{D.SPLIT_MAX_PARTS} reliefs or base parts.")
+    t0 = body.t0 if body.t0.tzinfo else body.t0.replace(tzinfo=m.window_start.tzinfo)
+    if t0 < m.window_start or t0 + timedelta(minutes=m.on_station_min) > m.window_end:
+        raise HTTPException(422, "The covered period must sit inside the mission's window.")
+    if body.kind == "SPLIT_BASES" and (body.sizes and (sum(body.sizes) != m.required_aircraft or len(body.sizes) != body.parts)
+                                       or m.required_aircraft < body.parts):
+        raise HTTPException(422, "The parts must add up to the aircraft the mission needs.")
+    parts = SP.apply(db, user, m, body.kind, body.parts, t0, body.sizes, request_id=request.state.request_id)
+    db.commit()
+    return {"ok": True, "parts": [{"id": p.id, "code": p.code} for p in parts]}
 
 
 @router.post("/missions/{mid}/{action}")
@@ -542,6 +594,76 @@ def base_forecast(base_id: int, hours: int = 72, user: dict = Depends(current_us
     if base_id not in st.bases:
         raise HTTPException(404, "IAF base not found")
     return FC.base(db, st, base_id, min(hours, 96))
+
+
+# ================================================================== manual planning baseline (D43, PS-8)
+class ManualPicks(BaseModel):
+    picks: list[dict] = []
+
+
+def _manual_snapshot(db: Session):
+    """The picture a full re-plan starts from: the committed plan's sorties that haven't launched are free again."""
+    return S.build(db, release_sortie_ids=store._releasable(db))
+
+
+@router.post("/manual", status_code=201)
+def manual_start(user: dict = Depends(require(*PLANNERS)), db: Session = Depends(get_db)):
+    """Start a timed manual planning session on the current snapshot."""
+    from ..decide import manual as MN
+    st = _manual_snapshot(db)
+    ms = M.ManualSession(user_id=user["id"], sim_time=st.now, missions=len(st.missions), picks=[])
+    db.add(ms)
+    db.commit()
+    return {"id": ms.id, "started_at": ms.started_at, "sim_time": st.now, "missions": MN.choices(st), "simulated": True}
+
+
+def _manual(db: Session, sid: int, user: dict) -> M.ManualSession:
+    ms = db.get(M.ManualSession, sid)
+    if not ms or ms.user_id != user["id"]:
+        raise HTTPException(404, "Session not found")
+    if ms.finished_at:
+        raise HTTPException(409, "This session is finished.")
+    return ms
+
+
+@router.post("/manual/{sid}/check")
+def manual_check(sid: int, body: ManualPicks, user: dict = Depends(require(*PLANNERS)), db: Session = Depends(get_db)):
+    """Apply the real rules to the picks so far (feasibility, assignment, validator). Counted."""
+    from ..decide import manual as MN
+    ms = _manual(db, sid, user)
+    out = MN.evaluate(_manual_snapshot(db), body.picks)
+    ms.checks, ms.picks = ms.checks + 1, body.picks
+    db.commit()
+    return out
+
+
+@router.post("/manual/{sid}/finish")
+async def manual_finish(sid: int, body: ManualPicks, request: Request, user: dict = Depends(require(*PLANNERS))):
+    """Stop the clock, evaluate the picks, plan the same snapshot with the optimiser, store both."""
+    from ..decide import manual as MN
+
+    def run():
+        with SessionLocal() as db:
+            ms = _manual(db, sid, user)
+            st = _manual_snapshot(db)
+            mine = MN.evaluate(st, body.picks)
+            ms.finished_at = datetime.now().astimezone()
+            opt = MN.optimiser_result(st)
+            ms.picks = body.picks
+            ms.result = {"manual": {k: v for k, v in mine.items() if k != "rows"}, "optimiser": opt,
+                         "elapsed_s": round((ms.finished_at - ms.started_at).total_seconds()), "checks": ms.checks}
+            audit(db, user, "CREATE", "manual_session", ms.id, None, None,
+                  {"covered": mine["covered"], "of": mine["missions"], "elapsed_s": ms.result["elapsed_s"]}, request_id=request.state.request_id)
+            db.commit()
+            return {**ms.result, "rows": mine["rows"]}
+    return await asyncio.to_thread(run)
+
+
+@router.get("/manual")
+def manual_list(user: dict = Depends(current_user), db: Session = Depends(get_db)):
+    return {"items": _q(db, """SELECT ms.id, ms.started_at, ms.finished_at, ms.sim_time, ms.missions, ms.checks, ms.result,
+                                      u.display_name AS planner FROM manual_session ms LEFT JOIN app_user u ON u.id = ms.user_id
+                               WHERE ms.finished_at IS NOT NULL ORDER BY ms.id DESC LIMIT 50"""), "simulated": True}
 
 
 # ================================================================== snag-risk model (D38, FR-FCT-04)

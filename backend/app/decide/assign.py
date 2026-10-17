@@ -78,7 +78,7 @@ def assign(st: OpsState, c: Candidate, led: Ledger, keep: Assignment | None = No
     if len(elig) < c.pilots:
         return f"only {len(elig)} of {c.pilots} {c.req.label()} {t.name} pilots free at {st.bases[c.base_id].code}"
     chosen, notes = [], []
-    if c.n >= 4:
+    if c.n >= 4 and t.family == "fighter":       # a fighter 4-ship needs a qualified lead (fighter-stream qualification)
         lead = next((x for x in elig if "FORMATION_LEAD_4" in x.quals), None)
         if lead is None:
             return f"no 4-ship formation lead free at {st.bases[c.base_id].code}"

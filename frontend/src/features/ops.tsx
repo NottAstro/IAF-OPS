@@ -128,7 +128,8 @@ export function Explanation({ it }: { it: PlanItemView }) {
   );
 }
 
-export function Unmet({ m, reasons, fixes }: { m: PlanMission; reasons: Reason[]; fixes: Fix[] }) {
+export function Unmet({ m, reasons, fixes, onApply, busy }: { m: PlanMission; reasons: Reason[]; fixes: Fix[];
+  onApply?: (f: Fix) => void; busy?: boolean }) {
   return (
     <>
       <Row label="Window" value={`${hhmm(m.window_start)}–${hhmm(m.window_end)} IST`} />
@@ -142,7 +143,11 @@ export function Unmet({ m, reasons, fixes }: { m: PlanMission; reasons: Reason[]
         </div>
       ))}
       {fixes.length > 0 && <h4 className="section-h" style={{ fontSize: 13 }}>What would fix it</h4>}
-      {fixes.map((f) => <div key={f.text} className="s-info" style={{ fontSize: 13, margin: "3px 0" }}>○ {f.text}</div>)}
+      {fixes.map((f) => (
+        <div key={f.text} className="s-info" style={{ fontSize: 13, margin: "3px 0" }}>○ {f.text}
+          {onApply && f.kind.startsWith("SPLIT_") && <button className="btn btn-sm" style={{ marginLeft: 8 }} disabled={busy}
+            onClick={() => onApply(f)}>Apply split</button>}</div>
+      ))}
     </>
   );
 }

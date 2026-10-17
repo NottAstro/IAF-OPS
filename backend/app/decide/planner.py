@@ -40,7 +40,7 @@ class PlanResult:
 
 def spec(c: F.Candidate, a: Assignment, key: str) -> ItemSpec:
     return ItemSpec(key, c.mission_id, c.base_id, c.type_id, c.launch, c.recovery, c.on_station, list(a.aircraft),
-                    list(a.crew), c.fuel_l, dict(c.weapons), c.route, c.req, c.duration_h, c.turnaround)
+                    list(a.crew), c.fuel_l, dict(c.weapons), c.route, c.req, c.duration_h, c.turnaround, c.off_station)
 
 
 def specs(c: F.Candidate, a: Assignment, key: str) -> list[ItemSpec]:
@@ -65,14 +65,17 @@ def plan(st: S.OpsState, preset: str = "BALANCED", stability: dict | None = None
     fail_reason: dict[int, str] = {}
     sol, assignments = None, {}
     sub = _scoped(st, scope)
-    base = O.base_model(sub, view)                 # once: retries only forbid options
+    outside = {m.depends_on for m in st.missions.values() if m.depends_on} - scope
+    cover = st.cover_of({x for s in outside for x in st.family_of(s)} | outside) if outside else {}
+    base = O.base_model(sub, view, cover_fixed=cover)    # once: retries only forbid options
     for _ in range(5):
         sol = O.solve(sub, view, preset, forbid=forbid, stability=stability, workers=workers, seed=seed, time_s=time_s,
                       base=base)
         assignments, fails = assign_all(sub, sol.selected, keep)
         if not fails:
             # the independent validator has the last word; an option it rejects is forbidden and the model re-solved
-            vs = validate(st, [x for mid, c in sol.selected.items() for x in specs(c, assignments[mid], st.missions[mid].code)])
+            vs = validate(st, [x for mid, c in sol.selected.items() for x in specs(c, assignments[mid], st.missions[mid].code)],
+                          cover=cover)
             fails = {v.mission_id: f"validator: {v.detail}" for v in vs if v.mission_id in sol.selected}
             if not fails:
                 break
@@ -85,16 +88,17 @@ def plan(st: S.OpsState, preset: str = "BALANCED", stability: dict | None = None
             if mid not in sol.unmet:
                 sol.unmet.append(mid)
     all_specs = [x for mid, c in sol.selected.items() for x in specs(c, assignments[mid], st.missions[mid].code)]
-    violations = validate(st, all_specs)
+    violations = validate(st, all_specs, cover=cover)
     for v in violations:   # defensive: the validator is independent; anything it rejects is not proposed
         log.warning("plan item rejected by validator: %s %s %s", v.key, v.rule, v.detail)
         if v.mission_id in sol.selected:
             sol.selected.pop(v.mission_id)
             sol.unmet.append(v.mission_id)
             fail_reason[v.mission_id] = f"validator: {v.detail}"
-    if _fill(sub, st, view, sol, assignments):
+    regrouped = _whole_groups(st, sol, fail_reason)            # first, so a dropped group's resources can be filled
+    if _fill(sub, st, view, sol, assignments, cover) or regrouped:
         all_specs = [x for mid, c in sol.selected.items() for x in specs(c, assignments[mid], st.missions[mid].code)]
-    violations = validate(st, all_specs)           # what is reported is the final plan (expected: none)
+    violations = validate(st, all_specs, cover=cover)   # what is reported is the final plan (expected: none)
     res = PlanResult(st, solver_status=sol.status, solve_ms=sol.solve_ms, violations=[v.as_dict() for v in violations],
                      selected=sol.selected, assignments=assignments)
     for mid, c in sorted(sol.selected.items(), key=lambda kv: kv[1].launch):
@@ -111,41 +115,99 @@ def plan(st: S.OpsState, preset: str = "BALANCED", stability: dict | None = None
     return res
 
 
-def _fill(sub: S.OpsState, st: S.OpsState, view: dict, sol: O.Solution, assignments: dict) -> list:
+def _whole_groups(st: S.OpsState, sol: O.Solution, fail_reason: dict) -> bool:
+    """D42: if a part of a split mission lost its package (crewing failed after the solve), its siblings are no use:
+    drop them too, with the reason."""
+    groups: dict = {}
+    for mid, m in st.missions.items():
+        if m.parent is not None:
+            groups.setdefault(m.parent, []).append(mid)
+    changed = False
+    for kids in groups.values():
+        gap = [k for k in kids if k not in sol.selected]
+        if gap and len(gap) < len(kids):
+            for k in kids:
+                if k in sol.selected:
+                    sol.selected.pop(k)
+                    sol.unmet.append(k)
+                    fail_reason[k] = f"{st.missions[gap[0]].code} couldn't be covered, so the other parts are no use"
+                    changed = True
+    return changed
+
+
+def _place(sub: S.OpsState, st: S.OpsState, sol: O.Solution, assignments: dict, mid: int, c: F.Candidate, cover: dict,
+           without: tuple = ()) -> Assignment | None:
+    """Crew option c around the plan (minus the missions in `without`) and validate the result; None if it doesn't fit."""
+    led, acc = Ledger(), []
+    for m2, c2 in sol.selected.items():
+        if m2 not in without:
+            led.take(c2, assignments[m2])
+            acc += specs(c2, assignments[m2], st.missions[m2].code)
+    a = assign(sub, c, led)
+    if isinstance(a, str):
+        return None
+    led.take(c, a)
+    if c.support is not None:
+        s = assign(sub, c.support, led)
+        if isinstance(s, str):
+            return None
+        a.support = s
+    return None if validate(st, acc + specs(c, a, st.missions[mid].code), cover=cover) else a
+
+
+def _fill(sub: S.OpsState, st: S.OpsState, view: dict, sol: O.Solution, assignments: dict, cover: dict) -> list:
     """Fill pass (D40): the model's capacity rows are aggregates, so an option can pass them and still fail detailed
-    crewing; after the retries such a mission is left uncovered although another option would fit. Give every uncovered
-    mission one more try, priority first: the cheapest option that can be crewed around the plan and still validates."""
-    led = Ledger()
-    for mid, c in sol.selected.items():
-        led.take(c, assignments[mid])
-    acc = [x for mid, c in sol.selected.items() for x in specs(c, assignments[mid], st.missions[mid].code)]
-    added = []
-    for mid in sorted(set(sol.unmet), key=lambda m: (st.missions[m].priority, st.missions[m].window_start, m)):
-        for c in sorted(view.get(mid, []), key=lambda c: (c.cost, c.idx))[:8]:
-            a = assign(sub, c, led)
-            if isinstance(a, str):
-                continue
-            led.take(c, a)
-            if c.support is not None:
-                s = assign(sub, c.support, led)
-                if isinstance(s, str):
-                    led.release(c, a)
-                    continue
-                a.support = s
-                led.take(c.support, s)
-            sp = specs(c, a, st.missions[mid].code)
-            if validate(st, acc + sp):
-                led.release(c, a)
-                if a.support is not None:
-                    led.release(c.support, a.support)
-                continue
-            acc += sp
-            sol.selected[mid], assignments[mid] = c, a
-            added.append(mid)
-            break
+    crewing; after the retries such a mission is left uncovered although another option would fit. Every uncovered
+    mission gets one more try, priority first: the cheapest option that can be crewed around the plan and validates.
+    A P1/P2 mission may also displace up to two strictly lower-priority packages at the same base and type (they go back
+    on the list and are tried again), so the result is never lexicographically worse than the plan it started from."""
+    prio = lambda m: (st.missions[m].priority, st.missions[m].window_start, m)  # noqa: E731
+    todo = sorted({m for m in sol.unmet if not st.missions[m].part}, key=prio)   # parts are all or nothing: never one at a time
+    added, tried = [], set()
+    supporters = {m.depends_on for m in st.missions.values() if m.depends_on}
+    while todo:
+        mid = todo.pop(0)
+        tried.add(mid)
+        opts = sorted(view.get(mid, []), key=lambda c: (c.cost, c.idx))
+        placed = None
+        for c in opts[:8]:
+            a = _place(sub, st, sol, assignments, mid, c, cover)
+            if a is not None:
+                placed = (c, a, ())
+                break
+        if placed is None and st.missions[mid].priority in ("P1", "P2"):
+            for c in opts[:4]:
+                rivals = sorted((m2 for m2, c2 in sol.selected.items()
+                                 if st.missions[m2].priority > st.missions[mid].priority and not st.missions[m2].part
+                                 and m2 not in supporters and c2.base_id == c.base_id and c2.type_id == c.type_id
+                                 and c2.ac_iv[0] < c.ac_iv[1] and c.ac_iv[0] < c2.ac_iv[1]), key=prio, reverse=True)
+                for k in (1, 2):
+                    if len(rivals) < k:
+                        break
+                    a = _place(sub, st, sol, assignments, mid, c, cover, tuple(rivals[:k]))
+                    if a is not None:
+                        placed = (c, a, tuple(rivals[:k]))
+                        break
+                if placed:
+                    break
+        if placed is None:
+            continue
+        c, a, out = placed
+        for m2 in out:
+            sol.selected.pop(m2)
+            assignments.pop(m2, None)
+            sol.unmet.append(m2)
+            if m2 in added:
+                added.remove(m2)
+            if m2 not in tried:
+                todo.append(m2)
+            todo.sort(key=prio)
+        sol.selected[mid], assignments[mid] = c, a
+        added.append(mid)
+        log.info("fill pass covered %s%s", st.missions[mid].code,
+                 f" (displacing {', '.join(st.missions[m].code for m in out)})" if out else "")
     if added:
         sol.unmet = [m for m in sol.unmet if m not in added]
-        log.info("fill pass covered %d more mission(s)", len(added))
     return added
 
 
@@ -324,4 +386,5 @@ def item_spec_from_row(r: dict) -> ItemSpec:
                     r["on_station_ts"], list(r["aircraft_ids"] or []), [tuple(x) for x in (r["crew_positions"] or [])],
                     r["fuel_l"], sc.get("weapons", {}), route, Req(frozenset(rq.get("quals", [])), rq.get("rating", "WHITE"),
                                                                    rq.get("ops", False)),
-                    sc.get("duration_h", 1.0), sc.get("turnaround", 45))
+                    sc.get("duration_h", 1.0), sc.get("turnaround", 45),
+                    _dt(sc["off_station"]) if sc.get("off_station") else None)

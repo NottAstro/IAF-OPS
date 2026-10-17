@@ -844,9 +844,9 @@ Single source: `backend/app/models.py` section I. Policy values: `backend/app/de
 
 | Table | Purpose |
 |---|---|
-| `mission` (extended) | `target_geom` / `target_base_id`, `required_aircraft`, `eligible_roles`, `loadout_code`, `on_station_min`, `min_quals`, `max_risk`, `requested_by`, `approved_by` / `approved_at`, `outcome` (NONE / PARTIAL / MET / MISSED), `on_station_achieved_min`; status `REQUESTED → APPROVED → TASKED → ACTIVE → COMPLETED` (or `CANCELLED`) |
+| `mission` (extended) | `depends_on_id` (D41: the mission that must be on station whenever this one is), `parent_mission_id` / `part_no` / `parts` / `split_kind` (D42: a part of a split mission, `RELIEF` or `BASES`; the parent's status is `SPLIT`), `target_geom` / `target_base_id`, `required_aircraft`, `eligible_roles`, `loadout_code`, `on_station_min`, `min_quals`, `max_risk`, `requested_by`, `approved_by` / `approved_at`, `outcome` (NONE / PARTIAL / MET / MISSED), `on_station_achieved_min`; status `REQUESTED → APPROVED → TASKED → ACTIVE → COMPLETED` (or `CANCELLED`) |
 | `loadout_config`, `type_loadout` | Generic loadouts (D30): category counts per aircraft, fuel penalty, radius factor; compatibility by role family |
-| `airspace_zone` | Training areas (capacity 2), exercise ranges (`DANGER`, capacity 1), restricted areas, temporary reservations (exercise runway closures use code `RWY-<base>`) |
+| `airspace_zone` | Imported public airspace (D44, codes `OAIP-…`, source `PUBLIC`: `RESTRICTED`, `DANGER`, `CIVIL_TERMINAL`), training areas (capacity 2), exercise ranges (`DANGER`, capacity 1), restricted areas, temporary reservations (exercise runway closures use code `RWY-<base>`) |
 | `threat_zone` | Generic border bands along the de facto LoC / LAC + exercise injects (D31), each with `risk_level` 0–1 and an active window |
 | `wx_base_forecast` | Hourly base forecast; sources `SYNTHETIC` (seed), `OPEN_METEO` (poller), `EXERCISE` (inject); the planner prefers exercise > live > synthetic |
 | `plan`, `plan_item`, `plan_unmet` | Plans (`PLAN` / `RETASK`), their packages (tails, crew positions, route, score breakdown incl. predicted snag risk and civil traffic, explanation, alternatives, change vs parent: KEPT / SWAP / MOVED / NEW / DIVERT / REROLE, or SKIPPED at commit) and uncovered missions (reasons incl. `REROLED`, fixes). `plan_item.support` (JSONB, NULL when none): the tanker leg (D36): base, type, launch / recovery, rendezvous point and window, route, fuel, tails, crew positions, `sortie_id` once committed |
@@ -855,6 +855,7 @@ Single source: `backend/app/models.py` section I. Policy values: `backend/app/de
 | `sortie` (extended) | `origin = PLAN`, `loadout_code`, `plan_item_id`; `mission_type = AAR_SUPPORT` for a package's tanker; `reroute_ts`: set when re-roled in flight, the simulator flies the new route from that moment (D37) |
 | `sortie_aircraft` (extended) | `hsm_at_launch`: the tail's hours since maintenance when it flew, the snag-risk model's exposure row (D38) |
 | `maintenance_event` | Maintenance log (D38): `PREFLIGHT` / `AIRBORNE` / `POSTFLIGHT` defects (with the sortie and its planned length) and `SCHEDULED` inspections, with hours since maintenance and airframe hours. Written by the generator (90-day history) and the simulator |
+| `manual_session` | Manual planning baseline (D43): who, when (wall clock), the sim time of the snapshot, missions, rule checks run, the picks, and the result (manual coverage and violations, the optimiser on the same snapshot, elapsed seconds). Exported to `docs/manual_sessions.csv` by the benchmark |
 | `ml_model` | Trained models and their cards (D38): name (`snag_risk`), features, coefficients, scaling, held-out metrics, the sim time the data runs to; the newest row per name is used |
 | `gis_defacto_admin0` | Natural Earth default admin-0, **planning only, never rendered** (D33) |
 
@@ -868,4 +869,6 @@ Single source: `backend/app/models.py` section I. Policy values: `backend/app/de
 | I17 | Every plan sortie traces to a committed plan item and a `PLAN_COMMIT` audit row | commit service, tests |
 | I18 | No runway launches more than 8 aircraft in a 15-minute slot | optimiser launch rows, validator `LAUNCH_RATE` |
 | I19 | A tanker leg is crewed, fuelled and validated like a package; its sortie is linked to the same plan item | `planner.specs`, commit `_commit_support`, tests |
+| I21 | A dependent package is on station only while its supporter is (D41) | optimiser link rows, validator `DEPENDENCY`, re-task scope |
+| I22 | The parts of a split mission are all covered or none is (D42) | optimiser, planner `_whole_groups`, re-task scope |
 | I20 | The snag-risk model never reads the simulator's defect law; only `model_card.py` compares against it | code review, test `test_snag_model_learns_from_the_log_and_is_calibrated` |

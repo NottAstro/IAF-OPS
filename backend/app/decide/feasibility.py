@@ -23,6 +23,7 @@ REASON_TEXT = {
     "NO_ELIGIBLE_TYPE": "No aircraft type in service can fly this mission",
     "LOADOUT_INCOMPATIBLE": "Requested loadout doesn't fit the eligible types",
     "NOT_ENOUGH_AIRCRAFT": "Too few aircraft of the type at the base",
+    "LAUNCH_RATE": "Too many aircraft to launch from one base in one 15-minute slot",
     "OUT_OF_RANGE": "Out of range or endurance",
     "ROUTE_BORDER_BUFFER": "Route would come within the border buffer",
     "AIRSPACE_RESTRICTED": "Route crosses restricted airspace",
@@ -37,6 +38,7 @@ REASON_TEXT = {
     "CAPACITY_CONFLICT": "Resources taken by higher-priority missions",
     "ASSIGNMENT_FAILED": "No tails or crew left once the plan was assigned",
     "NO_TANKER": "Needs air-to-air refuelling, but no tanker can meet the receivers in time",
+    "NO_COVER": "Its AEW&C (support) mission isn't on station when it would be",
 }
 
 
@@ -209,8 +211,9 @@ def tanker_leg(st: OpsState, route: list, out_km: float, t_l: datetime, speed: f
     return best, why
 
 
-def generate(st: OpsState, preset: str = "BALANCED", mission_ids: set | None = None):
-    """-> (candidates by mission id, rejections by mission id)."""
+def generate(st: OpsState, preset: str = "BALANCED", mission_ids: set | None = None, only: dict | None = None):
+    """-> (candidates by mission id, rejections by mission id). only: mission id -> (base id, type id) to consider
+    (the manual planning baseline evaluates a planner's own picks, D43)."""
     w = D.PRESETS.get(preset, D.PRESETS["BALANCED"])
     cands: dict[int, list[Candidate]] = defaultdict(list)
     rejects: dict[int, list[Rejection]] = defaultdict(list)
@@ -237,11 +240,17 @@ def generate(st: OpsState, preset: str = "BALANCED", mission_ids: set | None = N
             L = st.loadouts.get(lo, {"items": {}, "fuel_penalty_pct": 0, "radius_factor": 1.0})
             speed = t.cruise_kt * KMH_PER_KT
             for b in st.bases.values():
+                if only and only.get(m.id) not in (None, (b.id, t.id)):
+                    continue
                 n_have = usable.get((b.id, t.id), 0)
                 if n_have == 0 or m.target_base_id == b.id:
                     continue
                 if n_have < m.required:
                     rejects[m.id].append(Rejection(b.id, t.id, "NOT_ENOUGH_AIRCRAFT", f"{n_have} of {m.required} {t.name}"))
+                    continue
+                if m.required > b.runways * D.LAUNCH_CAP_PER_RUNWAY:      # one package launches inside one slot (D36)
+                    rejects[m.id].append(Rejection(b.id, t.id, "LAUNCH_RATE",
+                                                   f"{m.required} aircraft; {b.code} launches {b.runways * D.LAUNCH_CAP_PER_RUNWAY} per 15 min"))
                     continue
                 home = (b.lon, b.lat)
                 d = dist_km(home, m.target)

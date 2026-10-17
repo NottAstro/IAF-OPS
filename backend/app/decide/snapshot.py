@@ -135,6 +135,9 @@ class Mission:
     on_station_min: int
     min_quals: tuple
     max_risk: str
+    depends_on: int | None = None   # D41: mission that must be on station whenever this one is
+    parent: int | None = None       # D42: split parent (parts are covered all or nothing)
+    part: tuple | None = None       # (part_no, parts, kind)
 
 
 @dataclass
@@ -193,6 +196,22 @@ class OpsState:
         return c
 
     # -------------------------------------------------------------- weather
+    def family_of(self, mid: int) -> list:
+        """A mission, or the parts it was split into (D42): what counts as "that mission" for a dependency."""
+        kids = [k for k, m in self.missions.items() if m.parent == mid]
+        return kids or [mid]
+
+    def cover_of(self, mids: set) -> dict:
+        """mission id -> [(on station, off station)] of committed packages that are still live (D41)."""
+        from datetime import datetime as _dt
+        out: dict = {}
+        for it in self.committed:
+            if it["mission_id"] in mids and it.get("sortie_status") not in ("CANCELLED", "ABORTED") and it.get("on_station_ts"):
+                off = (it.get("score") or {}).get("off_station")
+                if off:
+                    out.setdefault(it["mission_id"], []).append((it["on_station_ts"], _dt.fromisoformat(off) if isinstance(off, str) else off))
+        return out
+
     def wx_at(self, base_id: int, t: datetime):
         rows = self.wx.get(base_id)
         if not rows:
@@ -401,7 +420,9 @@ def build(db: Session, horizon_h: float = D.HORIZON_H, now: datetime | None = No
         missions[r["id"]] = Mission(r["id"], r["code"], r["name"], r["mission_type"], r["priority"], r["status"],
                                     r["window_start"], r["window_end"], r["requesting_command_id"], (r["tx"], r["ty"]),
                                     r["target_base_id"], r["required_aircraft"], tuple(r["eligible_roles"] or ()),
-                                    r["loadout_code"], r["on_station_min"], tuple(r["min_quals"] or ()), r["max_risk"])
+                                    r["loadout_code"], r["on_station_min"], tuple(r["min_quals"] or ()), r["max_risk"],
+                                    r["depends_on_id"], r["parent_mission_id"],
+                                    (r["part_no"], r["parts"], r["split_kind"]) if r["parent_mission_id"] else None)
 
     # -------------------------------------------------------------- committed plan (for stability and re-tasking)
     committed, cpid = [], None

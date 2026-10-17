@@ -34,7 +34,7 @@ SWAPPABLE = {"AIRCRAFT_STATE", "AIRCRAFT_OVERLAP", "AIRCRAFT_HOURS", "CREW_STATE
 KIND = {"AIRCRAFT_STATE": "AIRCRAFT_US", "AIRCRAFT_OVERLAP": "AIRCRAFT_US", "AIRCRAFT_HOURS": "AIRCRAFT_US",
         "CREW_STATE": "CREW_UNAVAILABLE", "CREW_OVERLAP": "CREW_UNAVAILABLE", "RUNWAY": "RUNWAY_CLOSED",
         "WX": "WX_BELOW_MINIMA", "FUEL": "FUEL_SHORT", "WEAPONS": "STOCK_SHORT", "QRA": "AIRCRAFT_US",
-        "ROUTE": "THREAT_ACTIVATED", "THREAT": "THREAT_ACTIVATED"}
+        "ROUTE": "THREAT_ACTIVATED", "THREAT": "THREAT_ACTIVATED", "DEPENDENCY": "MISSION_CHANGED"}
 
 
 @dataclass
@@ -289,6 +289,20 @@ def propose(db: Session, det: Detection, user: dict | None = None, disruption_id
                 continue
         unresolved.append(iid)
     scope = {movable[i]["mission_id"] for i in unresolved} | set(det.new_missions)
+    # D41: a mission and the one it depends on (or that depend on it) are re-planned together
+    linked = set()
+    for mid in scope:
+        m = st.missions.get(mid)
+        if m and m.depends_on:
+            linked |= set(st.family_of(m.depends_on))
+        linked |= {d for d, x in st.missions.items() if x.depends_on is not None and mid in st.family_of(x.depends_on)}
+        if m and m.parent is not None:        # D42: parts of one split mission too
+            linked |= {k for k, x in st.missions.items() if x.parent == m.parent}
+    for iid, r in list(movable.items()):
+        if r["mission_id"] in linked and iid not in unresolved and r["mission_id"] not in changes:
+            unresolved.append(iid)
+            keep_rows.pop(iid, None)
+    scope |= {movable[i]["mission_id"] for i in unresolved}
     res = None
     if scope:
         # ------------------------------------------------------------ rung 2: partial re-solve of the affected missions

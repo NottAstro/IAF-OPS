@@ -58,6 +58,12 @@ with sync_playwright() as p:
     pg.wait_for_timeout(800)
     pg.screenshot(path=str(OUT / "06-whatif.png"), full_page=True)
 
+    pg.click("button.tab:has-text('Manual baseline')")    # D43: start (never finish) a session
+    pg.click("button:has-text('Start a timed session')")
+    pg.wait_for_selector("text=Check my plan", timeout=60000)
+    pg.wait_for_timeout(1500)
+    pg.screenshot(path=str(OUT / "06b-manual-baseline.png"))
+
     pg.goto(f"{BASE}/missions")
     pg.wait_for_timeout(5000)
     pg.screenshot(path=str(OUT / "07-missions.png"))
