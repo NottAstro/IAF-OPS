@@ -145,3 +145,8 @@ ALTER TABLE gis_point ADD COLUMN IF NOT EXISTS rank smallint;
 -- area for label priority in vector tiles (computed once)
 ALTER TABLE gis_admin_area ADD COLUMN IF NOT EXISTS area_km2 double precision;
 UPDATE gis_admin_area SET area_km2 = ST_Area(geom::geography) / 1e6 WHERE area_km2 IS NULL AND geom IS NOT NULL;
+
+-- Phase 2 additions for databases created before them (models.py creates them on a fresh database)
+ALTER TABLE plan_item ADD COLUMN IF NOT EXISTS support jsonb;              -- D36 tanker leg
+ALTER TABLE sortie ADD COLUMN IF NOT EXISTS reroute_ts timestamptz;        -- D37 in-flight re-role
+ALTER TABLE sortie_aircraft ADD COLUMN IF NOT EXISTS hsm_at_launch double precision;  -- D38 exposure

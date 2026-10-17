@@ -1,16 +1,21 @@
 # AGENTS.md: rules for agents building iaf-airops
 
-You are building **Phase 1** of an SIH 2026 entry for problem statement **SIH26250** (Ministry of Defence / DSSC). Phase 1 has four parts:
-- an inventory management system
-- realistic synthetic data
-- a dark military map dashboard (MapLibre GL; 3D terrain by default, flat in the Weather view; navy + neon-blue theme)
-- a tick simulator, **switched off for Phase 1** (`SIM_ENABLED=false`, ARCHITECTURE D20): the map shows only real/public data
+You are building an SIH 2026 entry for problem statement **SIH26250** (Ministry of Defence / DSSC): "Air Power: Dynamic Air
+Operations & Resource Optimisation". It has two layers:
+- **Phase 1, the common picture:** an inventory system of record, realistic synthetic data, and a dark military map dashboard
+  (MapLibre GL; 3D terrain by default, flat in the Weather view; navy + neon-blue theme).
+- **Phase 2, decision support** ([docs/PHASE2_IMPLEMENTATION_PLAN.md](docs/PHASE2_IMPLEMENTATION_PLAN.md)): mission tasking, an
+  optimising planner, dynamic re-tasking, explanations, forecasts, what-if / COA comparison, and an exercise mode. The tick
+  simulator is back on (`SIM_ENABLED=true`, ARCHITECTURE D29), but only in the **Ops** map view; the Live view stays real data only.
 
 These rules override your defaults. If a doc is silent or ambiguous, **ask; don't invent**.
 
 ## 1. Scope
-- Build only what [docs/PRD.md](docs/PRD.md) specifies.
-- **Do not write decision-support code:** no optimisation, scheduling solvers, recommendation, scoring/ranking or predictive models. That is Phase 2. Leave clean data and APIs, nothing more.
+- Build only what [docs/PRD.md](docs/PRD.md) (incl. §17, Phase 2) and the Phase 2 plan specify.
+- **Decision-support code lives in `backend/app/decide/`.** Recommendations are advisory: nothing reaches the sortie tables
+  without a human approval that is audited (plan commit, `decide/store.py`). Never write sorties from the planner directly.
+- **Overview screens stay values-only** (FR-CMD-04). Scores, rankings and explanations appear only in the Planner.
+- The planner's rules (minima, rest, risk levels, loadouts) are SIMULATED policy in `decide/config.py`; keep them there.
 - Do not add features, layers or screens that aren't in the PRD. Propose them instead.
 
 ## 2. Doc map (read before you start a task)
@@ -21,14 +26,15 @@ These rules override your defaults. If a doc is silent or ambiguous, **ask; don'
 | Modules, routes, live-air / weather / GIS pipelines, God's Eye ports, env, compose | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | Any external URL, key, limit or licence | [docs/API.md](docs/API.md) |
 | Anything visual, wording, symbols, SIM labelling | [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md) |
-| What to build next, done-when checks | [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) |
+| What to build next, done-when checks | [docs/IMPLEMENTATION_PLAN.md](docs/IMPLEMENTATION_PLAN.md) (Phase 1), [docs/PHASE2_IMPLEMENTATION_PLAN.md](docs/PHASE2_IMPLEMENTATION_PLAN.md) (Phase 2) |
 
 ## 3. Stack (pinned)
 | Area | Pinned choices |
 |---|---|
 | Frontend | Node 24, React 18, TypeScript strict, Vite 6, **MapLibre GL JS 5.24** (ARCHITECTURE D19), TanStack Query/Table, Zustand, React Router, React Hook Form + Zod, Lucide, @fontsource/b612(-mono) |
-| Backend | Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2 (async) + GeoAlchemy2, asyncpg, Alembic, httpx, argon2-cffi, PyJWT, structlog |
-| Database | PostgreSQL 16 + PostGIS 3.4 |
+| Backend | Python 3.12, FastAPI, Pydantic v2, SQLAlchemy 2 + GeoAlchemy2, psycopg 3, httpx, argon2-cffi, PyJWT |
+| Decision support | **OR-Tools CP-SAT 9.15** (Apache-2.0: the only solver dependency; the model builder stays solver-agnostic), pyshp (pure-Python shapefiles, so Windows needs no GDAL) |
+| Database | PostgreSQL 17 + PostGIS 3.5 (Docker `docker-compose.yml` on Windows; Homebrew on macOS) |
 | Wind sidecar | Node 24, God's Eye wind server, `@meri-imperiumi/eccodes-wasm` |
 | Tests | pytest (+ pytest-asyncio), vitest, one Playwright smoke |
 | Lint | ruff, mypy, eslint, prettier, stylelint |
@@ -47,12 +53,26 @@ These rules override your defaults. If a doc is silent or ambiguous, **ask; don'
 | `make check` | lint + typecheck + tests |
 | `make netcheck` | probe every upstream in API.md |
 
+On Windows (ARCHITECTURE D32): `scripts\setup.ps1` (venv, npm, PostGIS in Docker, GIS pipeline, seed; `-Restore` loads a dump
+from `scripts\dbdump.ps1` instead), `scripts\dev.ps1` (database + wind + API + web), `scripts\check.ps1` (tests + typecheck;
+stop `dev.ps1` first: the running simulator writes to the same database).
+
 ## 5. Folder ownership and import rules
 - **MapLibre code lives only under `frontend/src/map/`.** Features talk to the map through the Zustand store and `map/` APIs (`toggleTilt`), never by importing `maplibre-gl` directly.
 - **React never holds map objects in state beyond the one instance in `MapView`.** There is exactly one map; it is created and removed in one effect, so it is StrictMode-safe.
 - `frontend/src/vendor/godseye/` holds verbatim ports. It is used only through `map/` adapters.
 - `backend/app/models.py` is the single schema source. The generator imports models; the pipeline is independent.
-- Routers stay thin. Logic goes in services, `crud.py`, `live/`, `weather/` or `sim/`.
+- Routers stay thin. Logic goes in services, `crud.py`, `live/`, `weather/`, `sim/` or `decide/`.
+- `decide/snapshot.py` is the planner's only view of the world. The planner, validator, forecasts, what-if and re-tasking
+  read an `OpsState`; what-if works on `clone()` and never writes. `decide/resources.py` is the one definition of "free" and
+  "eligible": reuse it rather than re-deriving availability.
+- Sortie creation goes through `services/sorties.py` (human sorties and plan commit alike); weapons reservation through `adjust_stock()`.
+- `sim/reliability.py` is the simulated world's hidden defect law. `decide/` must never import it: the snag-risk model
+  (`decide/predict.py`) learns only from `maintenance_event` + `sortie_aircraft.hsm_at_launch`. Only the evaluation tool
+  `decide/model_card.py` may compare against it (D38).
+- The validator (`decide/validate.py`) and the optimiser's rows (`decide/optimiser.py`) must mean the same thing for every
+  limit (concurrency at start events for aircraft, crew, weapons, QRA; totals for fuel; slots for launches). Change both
+  or neither (D40). Civil traffic is a cost, never a rule (D39).
 - Reuse `crud_router`, `audit()`, `rbac.require()`, `DataTable` and `EntityForm` instead of writing one-off versions.
 - The region bbox and border buffer come **only** from `shared/region.json`.
 

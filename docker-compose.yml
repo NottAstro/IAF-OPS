@@ -1,0 +1,25 @@
+# PostGIS for development on any OS (ARCHITECTURE D32). The API, web and wind sidecar run natively
+# (scripts/dev.ps1 on Windows, `make dev` on macOS); only the database is containerised.
+#   docker compose up -d db
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    container_name: iaf-airops-db
+    environment:
+      POSTGRES_USER: airops
+      POSTGRES_PASSWORD: airops
+      POSTGRES_DB: airops
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./data/dumps:/dumps
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airops -d airops"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+volumes:
+  pgdata:

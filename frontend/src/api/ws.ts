@@ -12,6 +12,10 @@ const TYPE_KEYS: Record<string, string[][]> = {
   comms_node: [["sites"], ["summary"]],
   stock_level: [["summary"], ["inv"]],
   ground_crew_strength: [["summary"], ["inv"]],
+  plan: [["plans"], ["plan"], ["ops-summary"], ["ops-routes"], ["tasking"]],
+  disruption: [["disruptions"], ["ops-summary"]],
+  mission: [["missions"], ["ops-summary"], ["ops-missions"], ["plan"]],
+  runway: [["summary"], ["ops-wx"]],
 };
 
 /** One WebSocket per session: entity changes invalidate queries, new alerts raise toasts (FR-SIM-10). */
@@ -33,6 +37,20 @@ export function useLiveSocket(enabled: boolean) {
         if (lastSeq && msg.seq > lastSeq + 1) qc.invalidateQueries(); // gap: resync over REST
         lastSeq = msg.seq;
         const st = useStore.getState();
+        if (msg.topic === "tracks.sim") return st.set({ simTracks: msg.data });
+        if (msg.topic === "sim.clock") return st.set({ simClock: msg.data });
+        if (msg.topic === "retask.proposal") {
+          ["plans", "plan", "disruptions", "ops-summary"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+          return st.toast(`Re-task proposal ready: ${msg.data.summary}. Review it in the planner.`, "WARNING");
+        }
+        if (msg.topic === "plan.ready" || msg.topic === "disruption") {
+          ["plans", "disruptions", "ops-summary"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+          return;
+        }
+        if (msg.topic === "exercise.inject") {
+          ["exercise", "summary", "ops-wx", "ops-zones", "missions"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+          return st.toast(`Exercise inject: ${msg.data.message}`, "WARNING");
+        }
         if (msg.topic === "entity.changed") {
           const now = Date.now();
           if (now - lastInvalidate < 2500) return; // throttle refetch storms

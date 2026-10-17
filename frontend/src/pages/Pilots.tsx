@@ -3,7 +3,7 @@ import { useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { Base, Page, User } from "../api/types";
-import { ErrorText, Kpi, Loading, Pill, Row, Sim, ToneText } from "../components/ui";
+import { ErrorText, Kpi, Loading, Pill, Row, Sim, ToneText, onActivate } from "../components/ui";
 import { RANK, istTime, label, num } from "../lib/format";
 
 interface CrewRow { id: number; rank: string; first_name: string; last_name: string; callsign: string; aircrew_role: string; stream: string;
@@ -40,7 +40,7 @@ export function Pilots({ user }: { user: User }) {
         <table className="table">
           <thead><tr><th>Name</th><th>Rank</th><th>Callsign</th><th>Role</th><th>Category</th><th className="right">Total hours</th><th>Duty</th><th>Medical</th></tr></thead>
           <tbody>{q.data?.items.map((c) => (
-            <tr key={c.id} onClick={() => nav(`/pilots/${c.id}`)} style={{ cursor: "pointer" }}>
+            <tr key={c.id} onClick={() => nav(`/pilots/${c.id}`)} style={{ cursor: "pointer" }} tabIndex={0} onKeyDown={onActivate(() => nav(`/pilots/${c.id}`))}>
               <td>{c.first_name} {c.last_name} <span className="dim mono" style={{ fontSize: 11 }}>{c.service_no}</span></td>
               <td>{RANK[c.rank]}</td><td className="mono">{c.callsign}</td><td>{label(c.aircrew_role)}</td><td>{label(c.ops_category)}</td>
               <td className="num">{num(c.total_hours)}</td><td><Pill status={c.duty_status} /></td><td><Pill status={c.medical_status} /></td>

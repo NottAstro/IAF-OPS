@@ -154,3 +154,105 @@ export interface EntityMeta {
   retire: boolean;
   has_point: boolean;
 }
+
+// ---------------------------------------------------------------- Phase 2: decision support (PHASE2_IMPLEMENTATION_PLAN §9)
+export type Priority = "P1" | "P2" | "P3" | "P4";
+
+export interface MissionRow {
+  id: number; code: string; name: string; mission_type: string; priority: Priority; status: string; version: number;
+  window_start: string; window_end: string; required_aircraft: number; eligible_roles: string[] | null; loadout_code: string | null;
+  on_station_min: number; min_quals: string[] | null; max_risk: string; notes: string | null; outcome: string; on_station_achieved_min: number;
+  command: string | null; lon: number; lat: number; target_base: string | null; target_base_id: number | null;
+  plan_id: number | null; item_id: number | null; tasked_base: string | null; tasked_type: string | null; tasked_n: number | null;
+  tasked_launch: string | null; sortie_code: string | null; sortie_status: string | null; simulated: boolean;
+}
+
+export interface Reason { code: string; text: string; count: number; examples: string[]; nearest_km?: number }
+export interface Fix { kind: string; text: string }
+export interface ExplRow { label: string; value: string; note?: string; tone?: string }
+
+export interface PlanMission {
+  id: number; code: string; name: string; mission_type: string; priority: Priority; status: string; window_start: string;
+  window_end: string; required_aircraft: number; on_station_min: number; max_risk: string; command: string | null; lon: number; lat: number;
+}
+
+export interface PlanItemView {
+  id: number; status: string; change: string | null; mission: PlanMission;
+  base: { id: number; code: string; name: string }; recovery_base: { id: number; code: string; name: string } | null;
+  type: { id: number; name: string; role: string; category: string }; loadout_code: string | null; n_aircraft: number;
+  launch_ts: string; on_station_ts: string | null; recovery_ts: string;
+  aircraft: { id: number; tail_no: string }[];
+  crew: { id: number; aircraft_id: number; position: string; rank: string; name: string; callsign: string | null }[];
+  risk: number; fuel_l: number;
+  score: { cost: number; parts: Record<string, number>; duration_h: number; weapons: Record<string, number>; night: boolean;
+    req: { quals: string[]; rating: string; ops: boolean }; snag?: SnagView | null } | null;
+  explanation: { rows: ExplRow[]; binding: string[]; notes: string[]; impact: Record<string, unknown> } | null;
+  alternatives: { base: string; type: string; launch: string; cost_delta: number; why_not: string }[] | null;
+  route: [number, number][] | null; sortie: { id: number; code: string; status: string } | null; source_item_id: number | null;
+  support: PlanSupport | null;
+}
+
+/** Predicted defect risk for a package's tails (ARCHITECTURE D38, snag-risk model). */
+export interface SnagView {
+  tails: Record<string, number>; package: number; worst: string; worst_p: number; drivers: string[]; auc: number | null; model_id: number | null;
+}
+
+/** GET /ops/models/snag-risk: the model card. */
+export interface SnagModelCard {
+  name: string; trained: boolean; id?: number; trained_at?: string | null; data_until?: string | null; features?: string[];
+  method?: string; intended_use?: string; limits?: string; simulated?: boolean;
+  metrics?: {
+    test: { n: number; defects: number; base_rate: number; auc: number; brier: number; brier_base_rate: number; brier_skill: number;
+      log_loss: number; top_decile_lift: number; calibration: { predicted: number; observed: number; n: number }[] };
+    train: { n: number; defects: number; auc: number; brier: number; brier_skill: number };
+    split: { train_until: string; test_from: string }; coefficients: Record<string, number>; intercept: number; labels: Record<string, string>;
+  };
+}
+
+/** GET /ops/fleet/snag-risk: serviceable tails ranked by predicted defect risk. */
+export interface FleetSnagRisk {
+  items: { aircraft_id: number; tail_no: string; type: string; base: string; p: number; hours_left: number; recent_defects: number; why: string[] }[];
+  fleet_mean?: number; n?: number; hours?: number; model: { id: number; auc: number } | null; simulated: true;
+}
+
+/** A package's support leg (ARCHITECTURE D36): today a tanker meeting the receivers on their outbound leg. */
+export interface PlanSupport {
+  kind: "AAR"; base: { id: number; code: string; name: string } | null; type: { id: number; name: string; role: string; category: string } | null;
+  launch_ts: string; recovery_ts: string; rv: [number, number]; rv_start: string; rv_end: string; fuel_l: number; transit_min: number | null;
+  aircraft: { id: number; tail_no: string }[]; crew: { id: number; position: string; rank: string; name: string; callsign: string | null }[];
+  sortie: { id: number; code: string; status: string } | null;
+}
+
+export interface PlanKpis {
+  missions: number; covered: number; unmet: number; by_priority: Record<Priority, { covered: number; of: number }>;
+  sorties?: number; flying_hours?: number; fuel_l?: number; risk_peak?: number; risk_mean?: number; aircraft?: number; aircrew?: number;
+  tanker_sorties?: number; snag_expected?: number | null; qra_postures?: number; qra_met?: number; qra_backfill?: number; candidates?: number; solver_status: string; solve_ms: number;
+  total_ms?: number; violations?: number; rung?: string; changes?: Record<string, number>; proposal_ms?: number; issues?: string[];
+}
+
+export interface PlanView {
+  plan: { id: number; kind: "PLAN" | "RETASK" | "WHATIF"; status: string; scope: string; preset: string; version: number; created_at: string;
+    horizon_start: string; horizon_end: string; solver_status: string | null; solve_ms: number | null; kpis: PlanKpis; summary: string | null;
+    parent_plan_id: number | null; approved_by: number | null; approved_at: string | null; committed_at: string | null; simulated: boolean };
+  items: PlanItemView[];
+  unmet: { id: number; mission: PlanMission; reasons: Reason[]; fixes: Fix[]; dropped_item_id: number | null }[];
+}
+
+export interface PlanListRow {
+  id: number; kind: string; status: string; scope: string; preset: string; created_at: string; committed_at: string | null;
+  solve_ms: number | null; kpis: PlanKpis | null; summary: string | null; parent_plan_id: number | null; created_by: string | null;
+  command: string | null;
+}
+
+export interface Disruption {
+  id: number; ts: string; kind: string; message: string; status: string; proposal_plan_id: number | null; proposal_ms: number | null;
+  resolved_at: string | null; created_at: string; base: string | null;
+}
+
+export interface SimTrack {
+  track_id: string; kind: "SIM_IAF" | "SIM_UNKNOWN"; simulated: true; lat: number; lon: number; heading_deg: number; alt_m: number;
+  gs_kt: number; phase: string; callsign: string; sortie_id?: number; sortie_code?: string; tail_no?: string; type?: string;
+  mission_type?: string; origin?: string; base?: string; status?: string; detected?: boolean; interceptor_base?: string | null;
+}
+
+export interface SimClock { sim_now: string; speed: number; paused: boolean; tick_no: number }

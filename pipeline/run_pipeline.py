@@ -1,6 +1,7 @@
 """Static GIS pipeline (ARCHITECTURE §9): boundaries, places, civil airports -> PostGIS gis_* tables.
 
-Idempotent. Downloads go to data/raw/gis (skipped if present). Needs gdal (ogr2ogr) from Homebrew.
+Idempotent. Downloads go to data/raw/gis (skipped if present). Uses gdal (ogr2ogr) when it is on PATH, otherwise a
+pure-Python loader (pyshp + shapely), so Windows needs no GDAL install.
 OSM roads/rail/towers are a separate, heavier step: pipeline/osm.py.
 Run: .venv/bin/python pipeline/run_pipeline.py
 """
@@ -8,6 +9,7 @@ import csv
 import io
 import json
 import os
+import shutil
 import subprocess
 import urllib.request
 import zipfile
@@ -36,7 +38,12 @@ DOWNLOADS = {
     "ne_10m_admin_0_countries_ind.geojson":
         "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries_ind.geojson",
     "cities1000.zip": "https://download.geonames.org/export/dump/cities1000.zip",
+    # de facto control, PLANNING ONLY (never rendered): keeps plan routes on the Indian side of the LoC / LAC
+    "ne_10m_admin_0_countries.geojson":
+        "https://raw.githubusercontent.com/nvkelso/natural-earth-vector/master/geojson/ne_10m_admin_0_countries.geojson",
 }
+# OurAirports (public domain): civil airports here, runway geometry in the generator. Saved to data/raw/.
+OURAIRPORTS = {name: f"https://davidmegginson.github.io/ourairports-data/{name}" for name in ("airports.csv", "runways.csv")}
 
 
 def fetch(name: str, url: str) -> Path:
@@ -61,9 +68,46 @@ def geoboundaries(iso3: str, level: str) -> Path:
 
 
 def ogr(path: Path, table: str, extra: tuple = ()) -> None:
+    if not shutil.which("ogr2ogr"):
+        return stage_python(path, table)
     subprocess.run(["ogr2ogr", "-f", "PostgreSQL", PG_OGR, str(path), "-nln", f"stage.{table}", "-overwrite",
                     "-lco", "GEOMETRY_NAME=geom", "-lco", "FID=fid", "-nlt", "PROMOTE_TO_MULTI", "-t_srs", "EPSG:4326",
                     "-makevalid", *extra], check=True)
+
+
+def _features(path: Path):
+    """(properties, shapely geometry) from a GeoJSON or a WGS84 shapefile."""
+    from shapely.geometry import shape
+    if path.suffix == ".shp":
+        import shapefile  # pyshp: pure Python, so Windows needs no GDAL install
+        prj = path.with_suffix(".prj")
+        if prj.exists() and "GCS_WGS_1984" not in prj.read_text() and "WGS 84" not in prj.read_text():
+            raise SystemExit(f"{path.name} is not in WGS84; install GDAL (ogr2ogr) to reproject it")
+        with shapefile.Reader(str(path), encoding="utf-8", encodingErrors="replace") as r:
+            names = [f[0] for f in r.fields[1:]]
+            for sr in r.iterShapeRecords():
+                if sr.shape.shapeType != shapefile.NULL:
+                    yield dict(zip(names, sr.record)), shape(sr.shape.__geo_interface__)
+    else:
+        for f in json.loads(path.read_text(encoding="utf-8"))["features"]:
+            if f.get("geometry"):
+                yield f.get("properties") or {}, shape(f["geometry"])
+
+
+def stage_python(path: Path, table: str) -> None:
+    """Fallback for ogr2ogr: same stage table shape (laundered lower-case text columns, MultiPolygon `geom`, EPSG:4326)."""
+    rows = list(_features(path))
+    cols = sorted({k.lower() for p, _ in rows for k in p if k.lower() not in ("geom", "fid")})
+    with psycopg.connect(DSN, autocommit=True) as conn:
+        conn.execute(f"DROP TABLE IF EXISTS stage.{table}")
+        conn.execute(f"CREATE TABLE stage.{table} (fid serial PRIMARY KEY, {''.join(f'{c} text, ' for c in cols)}"
+                     f"geom geometry(MultiPolygon, 4326))")
+        sql = (f"INSERT INTO stage.{table} ({''.join(f'{c}, ' for c in cols)}geom) VALUES "
+               f"({'%s, ' * len(cols)}ST_Multi(ST_CollectionExtract(ST_MakeValid(ST_GeomFromWKB(%s, 4326)), 3)))")
+        with conn.cursor() as cur:
+            cur.executemany(sql, [([None if (v := {k.lower(): x for k, x in p.items()}.get(c)) is None else str(v)
+                                    for c in cols] + [g.wkb]) for p, g in rows])
+    print(f"  staged {table}: {len(rows)} (python)")
 
 
 BUILD_ADMIN = f"""
@@ -124,6 +168,27 @@ CHECKS = [
 ]
 
 
+def load_defacto(conn) -> None:
+    """Natural Earth default admin-0 -> gis_defacto_admin0 (planner only, ARCHITECTURE D33). Not a map layer."""
+    from shapely.geometry import MultiPolygon, box, shape
+    conn.execute("CREATE TABLE IF NOT EXISTS gis_defacto_admin0 (id bigserial PRIMARY KEY, iso3 varchar(3), name text, "
+                 "geom geometry(MultiPolygon, 4326))")
+    conn.execute("TRUNCATE gis_defacto_admin0 RESTART IDENTITY")
+    bb = box(W, S, E, N)
+    rows = []
+    for f in json.loads(fetch("ne_10m_admin_0_countries.geojson", DOWNLOADS["ne_10m_admin_0_countries.geojson"])
+                        .read_text(encoding="utf-8"))["features"]:
+        g = shape(f["geometry"])
+        if g.intersects(bb):
+            g = g.intersection(bb)
+            polys = [p for p in getattr(g, "geoms", [g]) if p.geom_type == "Polygon"]
+            if polys:
+                rows.append((f["properties"]["ADM0_A3"], f["properties"]["NAME"], MultiPolygon(polys).wkb))
+    with conn.cursor() as cur:
+        cur.executemany("INSERT INTO gis_defacto_admin0(iso3, name, geom) VALUES (%s, %s, ST_GeomFromWKB(%s, 4326))", rows)
+    print(f"  de facto admin-0 (planning only): {len(rows)}")
+
+
 def load_places(conn) -> None:
     conn.execute("TRUNCATE gis_place RESTART IDENTITY")
     z = zipfile.ZipFile(fetch("cities1000.zip", DOWNLOADS["cities1000.zip"]))
@@ -163,6 +228,12 @@ def main() -> None:
     print("1/5 download")
     for name, url in DOWNLOADS.items():
         fetch(name, url)
+    for name, url in OURAIRPORTS.items():
+        path = RAW.parent / name
+        if not path.exists() or path.stat().st_size == 0:
+            print("  download", name)
+            with urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=600) as r:
+                path.write_bytes(r.read())
     gb = {(iso3, lvl): geoboundaries(iso3, lvl) for iso3 in NEIGHBOURS for lvl in ("ADM1", "ADM2")}
 
     print("2/5 stage (ogr2ogr)")
@@ -190,6 +261,7 @@ def main() -> None:
         print("4/5 places + civil airports")
         load_places(conn)
         load_civil_airports(conn)
+        load_defacto(conn)
 
         print("5/5 boundary acceptance tests")
         failed = 0

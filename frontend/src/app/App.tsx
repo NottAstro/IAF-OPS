@@ -9,9 +9,13 @@ import { Splash } from "../components/Splash";
 import { Toasts } from "../components/ui";
 import { MapScreen } from "../features/MapScreen";
 import { istTime, label, zulu } from "../lib/format";
+import { useStore } from "../store";
 import { MapView } from "../map/MapView";
 import { Admin } from "../pages/Admin";
 import { Alerts, Audit } from "../pages/Alerts";
+import { AfterAction, Exercise } from "../pages/Exercise";
+import { Missions } from "../pages/Missions";
+import { Planner } from "../pages/Planner";
 import { Inventory } from "../pages/Inventory";
 import { Overview } from "../pages/Overview";
 import { PilotProfile, Pilots } from "../pages/Pilots";
@@ -52,6 +56,10 @@ function Authed({ user }: { user: User }) {
             <Route path="/" element={<Navigate to="/map" replace />} />
             <Route path="/map" element={<MapScreen user={user} />} />
             <Route path="/overview" element={<Overview />} />
+            <Route path="/missions" element={<Missions user={user} />} />
+            <Route path="/planner" element={<Planner user={user} />} />
+            <Route path="/exercise" element={user.role === "ADMIN" ? <Exercise /> : <Navigate to="/map" />} />
+            <Route path="/exercise/runs/:id" element={user.role === "VIEWER" ? <Navigate to="/map" /> : <AfterAction />} />
             <Route path="/inventory" element={<Navigate to="/inventory/aircraft" replace />} />
             <Route path="/inventory/:entity/:typeId?" element={<Inventory user={user} />} />
             <Route path="/pilots" element={<Pilots user={user} />} />
@@ -71,7 +79,7 @@ function Brand() {
   return (
     <span className="brand">
       <img src="/iaf-crest.svg" alt="" />
-      <span>Air Operations Picture<span className="brand-sub">SIH26250 · Phase 1 prototype</span></span>
+      <span>Air Operations Picture<span className="brand-sub">SIH26250 · decision support prototype</span></span>
     </span>
   );
 }
@@ -97,14 +105,17 @@ function TopBar({ user }: { user: User }) {
     <header className="topbar">
       <Brand />
       <nav className="nav" aria-label="Main">
-        {link("/map", "Map")}{link("/overview", "Overview")}{link("/inventory", "Inventory")}{link("/pilots", "Aircrew")}
+        {link("/map", "Map")}{link("/overview", "Overview")}{link("/missions", "Missions")}{link("/planner", "Planner")}
+        {link("/inventory", "Inventory")}{link("/pilots", "Aircrew")}
         <NavLink to="/alerts" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
           Alerts{crit + warn > 0 && <span className="badge-count" style={{ background: crit ? "var(--critical)" : "var(--warning)" }} aria-label={`${crit} critical, ${warn} warning`}>{crit ? `■ ${crit}` : `◆ ${warn}`}</span>}
         </NavLink>
         {user.role !== "VIEWER" && link("/audit", "Audit")}
+        {user.role === "ADMIN" && link("/exercise", "Exercise")}
         {user.role === "ADMIN" && link("/admin", "Admin")}
       </nav>
       <span className="topbar-spacer" />
+      <SimClock />
       <div className="clock" title="Real time"><span className="clock-main">{istTime(now).replace(" IST", "")} IST</span><span className="clock-sub">{zulu(now)}</span></div>
       <div className="user-chip">
         <span>{user.display_name}</span>
@@ -112,6 +123,18 @@ function TopBar({ user }: { user: User }) {
       </div>
       <button className="btn btn-ghost btn-sm" onClick={logout}>Sign out</button>
     </header>
+  );
+}
+
+/** Simulator clock (DESIGN_SYSTEM §7.2): simulated time, speed and pause state, kept apart from the real clock. */
+function SimClock() {
+  const c = useStore((s) => s.simClock);
+  if (!c) return null;
+  return (
+    <div className="clock sim-clock" title="Simulated time (exercise clock), not real time">
+      <span className="clock-main"><span className="sim-badge">SIM</span> {istTime(c.sim_now).replace(" IST", "")}</span>
+      <span className="clock-sub">{c.paused ? "paused" : `×${c.speed}`} · {zulu(c.sim_now)}</span>
+    </div>
   );
 }
 

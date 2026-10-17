@@ -2,7 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { User } from "../api/types";
+import type { FleetSnagRisk, User } from "../api/types";
 import { ErrorText, Gauge, Kpi, Loading, Pill, Row, Sim, ToneText } from "../components/ui";
 import { RANK, day, feet, istTime, kl, label, num, sevTone, tone, zulu } from "../lib/format";
 import { useStore } from "../store";
@@ -177,6 +177,8 @@ function Overview({ d }: { d: Summary }) {
         </>
       )}
 
+      <Tasking baseId={d.base.id} />
+
       <h3 className="section-h">Fuel <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>capacity and usage</span></h3>
       {d.fuel.length === 0 && <div className="empty">No fuel storage recorded at this base.</div>}
       {d.fuel.map((f) => {
@@ -205,6 +207,59 @@ function Overview({ d }: { d: Summary }) {
           <Row key={i} label={<>{label(t.kind)} <span className="dim">{t.grade}</span></>} extra={<span className="mono dim">{istTime(t.ts, true)}</span>} value={kl(t.quantity_l)} />
         ))}
       </>}
+    </>
+  );
+}
+
+interface TaskingData {
+  items: { id: number; launch_ts: string; recovery_ts: string; n_aircraft: number; change: string | null; code: string; name: string; priority: string;
+    mission_type: string; type: string; sortie_code: string | null; sortie_status: string | null }[];
+  outlook: { now: number; h6: number; h24: number; fuel_breach: string | null; weather: { ts: string; cat: string | null; night: boolean }[] } | null;
+}
+
+/** Phase 2: the committed packages flying from this base and a short, rule-based outlook (all simulated). */
+function Tasking({ baseId }: { baseId: number }) {
+  const q = useQuery({ queryKey: ["tasking", baseId], queryFn: () => api<TaskingData>(`/ops/bases/${baseId}/tasking`), staleTime: 60000, refetchInterval: 60000 });
+  const nav = useNavigate();
+  if (!q.data) return null;
+  const o = q.data.outlook;
+  return (
+    <>
+      <h3 className="section-h">Tasking today <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>{q.data.items.length ? `${q.data.items.length} packages` : "none committed"} <Sim /></span></h3>
+      {q.data.items.map((t) => (
+        <Row key={t.id} onClick={() => nav(`/planner?plan=current&item=${t.id}`)}
+          label={<><span className={`s-${t.priority === "P1" ? "critical" : t.priority === "P2" ? "warning" : t.priority === "P3" ? "caution" : "neutral"}`}>{t.priority}</span> <span className="mono">{t.code.replace(/^SIM-/, "")}</span></>}
+          extra={<span className="dim" style={{ fontSize: 11 }}>{t.n_aircraft} × {t.type}</span>}
+          value={<>{istTime(t.launch_ts).replace(" IST", "")}{t.sortie_status && t.sortie_status !== "PLANNED" ? <span className="dim"> · {label(t.sortie_status)}</span> : null}</>} />
+      ))}
+      {o && <>
+        <h3 className="section-h" style={{ fontSize: 14 }}>Outlook <span className="muted" style={{ fontSize: 11, fontWeight: 400 }}>forecast · defects predicted per tail</span></h3>
+        <Row label="Aircraft free now · +6 h · +24 h" value={`${num(o.now, 0)} · ${num(o.h6, 0)} · ${num(o.h24, 0)}`} />
+        <Row label="Weather next 24 h" value={<span className="status-strip">{o.weather.map((w) => w.cat ? <Pill key={w.ts} status={w.cat} text={`${istTime(w.ts).slice(0, 5)} ${w.cat}`} /> : null)}</span>} />
+        {o.fuel_breach && <Row label="ATF reaches reserve" value={<ToneText toneName="critical">{istTime(o.fuel_breach, true)}</ToneText>} />}
+      </>}
+      <SnagRisk baseId={baseId} />
+    </>
+  );
+}
+
+/** D38: the serviceable tails here most likely to develop a defect on their next sortie (snag-risk model). */
+function SnagRisk({ baseId }: { baseId: number }) {
+  const q = useQuery({ queryKey: ["snag-risk", baseId], queryFn: () => api<FleetSnagRisk>(`/ops/fleet/snag-risk?base_id=${baseId}&limit=5`),
+    staleTime: 120000 });
+  if (!q.data?.model || !q.data.items.length) return null;
+  const mean = q.data.fleet_mean ?? 0;
+  return (
+    <>
+      <h3 className="section-h" style={{ fontSize: 14 }}>Snag risk <span className="muted" style={{ fontSize: 11, fontWeight: 400 }}>
+        predicted for a {num(q.data.hours, 1)} h sortie · model AUC {num(q.data.model.auc, 2)}</span> <Sim /></h3>
+      {q.data.items.map((r) => (
+        <Row key={r.aircraft_id} label={<><span className="mono">{r.tail_no}</span> <span className="dim">{r.type}</span></>}
+          extra={r.why.length ? <span className="dim" style={{ fontSize: 11 }}>{r.why.join(" · ")}</span> : undefined}
+          value={r.p >= 2 * mean ? <ToneText toneName="caution">{`${num(100 * r.p, 1)}%`}</ToneText> : `${num(100 * r.p, 1)}%`} />
+      ))}
+      <div className="dim" style={{ fontSize: 11 }}>Base average {num(100 * mean, 1)}% across {q.data.n} serviceable tails. Decision support only: the
+        engineering officer's serviceability call stands.</div>
     </>
   );
 }

@@ -14,7 +14,7 @@ from . import config, crud
 from .auth import router as auth_router
 from .live import feeds
 from .live.routes import router as live_router
-from .routers import alerts, bases, gis, overview, people, sim as sim_router
+from .routers import alerts, bases, exercise as exercise_router, gis, ops, overview, people, sim as sim_router
 from .sim.engine import Simulator
 from .weather import metar
 from .weather.routes import router as wx_router, wind_router
@@ -24,13 +24,25 @@ logging.basicConfig(level=config.LOG_LEVEL, format="%(asctime)s %(levelname)s %(
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
+def _warm_models() -> None:
+    from .db import SessionLocal
+    from .decide import predict
+    with SessionLocal() as db:
+        predict.current(db)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     app.state.sim = Simulator(hub)
     tasks = []
     if not config.OFFLINE_MODE:
+        from .weather import forecast as wx_forecast
         tasks.append(asyncio.create_task(metar.poll_loop()))
+        tasks.append(asyncio.create_task(wx_forecast.poll_loop()))
         tasks += feeds.start()
+    from .decide import monitor as plan_monitor   # Phase 2: re-tasking monitor (acts only while a plan is committed)
+    tasks.append(asyncio.create_task(plan_monitor.loop(hub)))
+    tasks.append(asyncio.create_task(asyncio.to_thread(_warm_models)))   # D38: train the snag-risk model once if missing
     if config.SIM_ENABLED:
         tasks.append(asyncio.create_task(app.state.sim.run()))
     else:  # Phase 1 without simulation: alerts still evaluate current data
@@ -67,8 +79,8 @@ async def http_error(request: Request, exc: FHTTPException):
 
 
 API = "/api/v1"
-for r in (auth_router, crud.router, bases.router, overview.router, people.router, alerts.router, gis.router,
-          sim_router.router, live_router, wx_router, wind_router):
+for r in (auth_router, ops.router, exercise_router.router, crud.router, bases.router, overview.router, people.router,
+          alerts.router, gis.router, sim_router.router, live_router, wx_router, wind_router):
     app.include_router(r, prefix=API)
 app.include_router(ws_router)
 

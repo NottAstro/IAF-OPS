@@ -6,7 +6,7 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Feature, Geometry, Point } from "geojson";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
-import type { Base, BaseStatus, LiveTrack } from "../api/types";
+import type { Base, BaseStatus, LiveTrack, Site } from "../api/types";
 import { LIVE_GROUP, type LayerId, type Selection, layerMode, useStore } from "../store";
 import { FLIGHT_CAT_TOKEN, cssVar } from "./colors";
 import { FOCUS_LAYERS, INDIA_BOUNDS, INTERACTIVE, LAYER_IDS, OVERLAY_BEFORE, REGION_BOUNDS, buildStyle } from "./style";
@@ -16,6 +16,8 @@ import { useWind } from "./wind";
 interface Metar { icao: string; lat: number; lon: number; flight_category: string }
 interface Near { name: string; code?: string; icao?: string; iata?: string; lat: number; lon: number; distance_km: number | string }
 interface Connectivity { rail: Near[]; rail_major: Near[]; airports: Near[]; bases: Near[] }
+interface Fc { type: "FeatureCollection"; features: Feature[] }
+interface WxImpact { base_id: number; code: string; lon: number; lat: number; worst: string; at: string | null; runway_closed: boolean }
 
 let current: MlMap | null = null;
 const PANEL_SHIFT = -200; // keep a selected base clear of the side panel
@@ -62,6 +64,9 @@ function registerClouds() {
 /** Map a clicked feature to a store selection. */
 function toSelection(f: MapGeoJSONFeature): Selection {
   const p = f.properties as Record<string, string | number>;
+  if (f.layer.id === "ops-sim" || f.layer.id === "ops-unk") return { kind: "simtrack", id: String(p.track_id) };
+  if (f.layer.id === "ops-missions") return { kind: "mission", id: Number(p.id) };
+  if (f.layer.id === "ops-routes") return { kind: "route", id: Number(p.id) };
   const [lon, lat] = (f.geometry as Point).coordinates;
   const id = f.layer.id;
   if (id === "live-air") return { kind: "live", hex: String(p.hex) };
@@ -74,6 +79,9 @@ function toSelection(f: MapGeoJSONFeature): Selection {
 function hoverText(f: MapGeoJSONFeature): [string, string] {
   const p = f.properties as Record<string, string | number | undefined>;
   const id = f.layer.id;
+  if (id === "ops-sim" || id === "ops-unk") return [`${p.label} (simulated)`, String(p.desc ?? "")];
+  if (id === "ops-missions") return [String(p.code), `${p.priority} · ${p.name} · ${p.state}`];
+  if (id === "ops-routes") return [`${p.code} (${p.priority})`, `${p.n_aircraft} × ${p.type} from ${p.base}${p.proposed ? " · proposed" : ""}`];
   if (id === "live-air") return [String(p.label || p.hex), String(p.desc ?? "")];
   if (id.startsWith("bases-"))
     return [String(p.name), [p.code, p.svc != null && p.svc !== "" ? `${p.svc}% serviceable` : "", p.qra ? `QRA ${p.qra}` : "",
@@ -141,6 +149,10 @@ export function MapView({ hidden }: { hidden: boolean }) {
     m.on("mouseout", () => tip.remove());
     m.on("click", (e) => {
       const st = useStore.getState();
+      if (st.picking === "mission" && st.missionDraft) {   // Missions page "Pick on map": hand the point back and return
+        st.set({ picking: null, missionDraft: { ...st.missionDraft, lat: e.lngLat.lat.toFixed(4), lon: e.lngLat.lng.toFixed(4) } });
+        return void history.back();
+      }
       const f = m.queryRenderedFeatures(e.point, { layers: live() })[0];
       const sel = f ? toSelection(f) : null;
       if (sel) return st.set({ selection: sel, panelTab: sel.kind === "base" && st.mode === "INFRA" ? "Bw" : "Ov" });
@@ -177,6 +189,71 @@ export function MapView({ hidden }: { hidden: boolean }) {
   useEffect(() => {
     if (live.data?.status) s.set({ feeds: { ...useStore.getState().feeds, ...live.data.status }, liveTracks: live.data.tracks });
   }, [live.data]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ---------------------------------------------------------------- operations view (Phase 2, all simulated)
+  const ops = s.mode === "OPS" && !hidden;
+  const airZones = useQuery({ queryKey: ["ops-zones", "airspace"], queryFn: () => api<Fc>("/ops/zones?kind=airspace"), enabled: ops && s.layers["ops-airspace"], staleTime: 60000 });
+  const threatZones = useQuery({ queryKey: ["ops-zones", "threat"], queryFn: () => api<Fc>("/ops/zones?kind=threat"), enabled: ops, refetchInterval: 30000 });
+  const missionsGeo = useQuery({ queryKey: ["ops-missions"], queryFn: () => api<Fc>("/ops/missions/geo"), enabled: ops, refetchInterval: 30000 });
+  const plansMeta = useQuery({ queryKey: ["plans", "meta"], queryFn: () => api<{ committed_id: number | null; pending_retask_id: number | null }>("/ops/plans?limit=1"),
+    enabled: ops, refetchInterval: 20000 });
+  const cid = plansMeta.data?.committed_id, pidr = plansMeta.data?.pending_retask_id;
+  const routes = useQuery({ queryKey: ["ops-routes", cid], queryFn: () => api<Fc>(`/ops/plans/${cid}/routes`), enabled: ops && !!cid });
+  const proposed = useQuery({ queryKey: ["ops-routes", "proposal", pidr], queryFn: () => api<Fc>(`/ops/plans/${pidr}/routes`), enabled: ops && !!pidr });
+  const radars = useQuery({ queryKey: ["sites", "radars"], queryFn: () => api<Site[]>("/sites/radars"), enabled: ops && s.layers["ops-radar"], staleTime: 60000 });
+  const ads = useQuery({ queryKey: ["sites", "ad"], queryFn: () => api<Site[]>("/sites/ad"), enabled: ops && s.layers["ops-ad"], staleTime: 60000 });
+  const wxImpact = useQuery({ queryKey: ["ops-wx"], queryFn: () => api<WxImpact[]>("/ops/wx-impact"), enabled: ops, refetchInterval: 60000 });
+
+  useEffect(() => {
+    if (!map) return;
+    setData(map, "ops-zones", [
+      ...(airZones.data?.features ?? []).map((f) => ({ ...f, properties: { ...f.properties, layer: "airspace" } })),
+      ...(threatZones.data?.features ?? []).map((f) => ({ ...f, properties: { ...f.properties, layer: "threat" } })),
+    ]);
+  }, [map, airZones.data, threatZones.data]);
+  useEffect(() => {
+    if (!map) return;
+    const ring = (x: Site, layer: string) => feature({ type: "Polygon", coordinates: [circle(x.lon, x.lat, x.max_range_km ?? 10)] },
+      { layer, ok: x.status === "OPERATIONAL", code: x.code });
+    setData(map, "ops-rings", [...(radars.data ?? []).map((x) => ring(x, "radar")), ...(ads.data ?? []).map((x) => ring(x, "ad"))]);
+  }, [map, radars.data, ads.data]);
+  useEffect(() => {
+    if (!map) return;
+    const changed = new Set((proposed.data?.features ?? []).filter((f) => f.properties?.change && f.properties.change !== "KEPT")
+      .map((f) => f.properties?.code));
+    setData(map, "ops-routes", [
+      ...(routes.data?.features ?? []).filter((f) => !changed.has(f.properties?.code)).map((f) => ({ ...f, properties: { ...f.properties, proposed: false } })),
+      ...(proposed.data?.features ?? []).filter((f) => changed.has(f.properties?.code)).map((f) => ({ ...f, properties: { ...f.properties, proposed: true } })),
+    ]);
+  }, [map, routes.data, proposed.data]);
+  useEffect(() => {
+    if (!map) return;
+    const tasked = cssVar("--ok"), open = cssVar("--caution"), req = cssVar("--neutral");
+    setData(map, "ops-missions", (missionsGeo.data?.features ?? []).map((f) => {
+      const p = f.properties as Record<string, string>;
+      const isTasked = ["TASKED", "ACTIVE", "PLANNED"].includes(p.status);
+      return { ...f, properties: { ...p, label: `${p.code.replace(/^SIM-/, "")} ${p.priority}`, color: isTasked ? tasked : p.status === "REQUESTED" ? req : open,
+        state: isTasked ? `tasked${p.tasked_base ? ` from ${p.tasked_base}` : ""}` : p.status === "REQUESTED" ? "awaiting approval" : "not tasked" } };
+    }));
+  }, [map, missionsGeo.data]);
+  useEffect(() => {
+    if (!map) return;
+    setData(map, "ops-wx", (wxImpact.data ?? []).map((w) => point(w.lon, w.lat, {
+      color: cssVar(w.runway_closed ? "--critical" : FLIGHT_CAT_TOKEN[w.worst] ?? "--neutral"),
+      label: w.runway_closed ? `${w.code} runway closed` : `${w.code} ${w.worst}${w.at ? ` ${new Date(w.at).toISOString().slice(11, 16)}Z` : ""}`,
+    })));
+  }, [map, wxImpact.data]);
+  useEffect(() => {
+    if (!map) return;
+    if (s.mode !== "OPS") return void setData(map, "ops-sim", []);
+    const iaf = cssVar("--sim"), unk = cssVar("--warning");
+    setData(map, "ops-sim", s.simTracks.map((t) => point(t.lon, t.lat, {
+      track_id: t.track_id, kind: t.kind, rot: t.heading_deg ?? 0,
+      icon: glyphIcon(t.kind === "SIM_IAF" && t.mission_type === "AIRLIFT" ? "airliner" : "fighter", t.kind === "SIM_IAF" ? iaf : unk, 24),
+      label: t.kind === "SIM_IAF" ? `${t.callsign} SIM` : `${t.callsign} UNKNOWN`,
+      desc: t.kind === "SIM_IAF" ? `${t.type ?? ""} ${t.sortie_code ?? ""} · ${t.phase.toLowerCase().replace("_", " ")}` : `${t.phase.toLowerCase()} · ${feetOf(t.alt_m)}`,
+    })));
+  }, [map, s.simTracks, s.mode]);
 
   // ---------------------------------------------------------------- what each view shows
   useEffect(() => {
@@ -368,6 +445,8 @@ export function MapView({ hidden }: { hidden: boolean }) {
 
   return <div ref={el} className="mapcanvas" style={{ visibility: hidden ? "hidden" : "visible" }} aria-label="Map of the region" />;
 }
+
+const feetOf = (m: number) => `${Math.round(m * 3.28084).toLocaleString("en-IN")} ft`;
 
 /** Tilt toggle for the 3D terrain: oblique ↔ straight down (no effect in the flat Weather view). */
 export function toggleTilt() {

@@ -396,3 +396,28 @@ Never use violet for real data. Never drop the SIM marker to make a screenshot l
 - `frontend/src/map/colors.ts` reads tokens via `getComputedStyle(document.documentElement)` and normalises them (including CSS4 `rgb(r g b / a)`) for MapLibre. Map code never hard-codes hex.
 - No CSS-in-JS. Use CSS modules per feature plus the global tokens. Selectors stay at single-class specificity so feature styles never fight.
 - One stylelint rule blocks raw hex outside `tokens.css`.
+
+---
+
+## 15. Phase 2 screens (decision support)
+Built only from the existing tokens and components (§3, §7); no new hues, fonts or libraries. Bezel soft-keys stay in the base panel.
+
+| Screen | Layout | Notes |
+|---|---|---|
+| **Planner** (`/planner`) | plan picker + preset + Generate / Approve / Commit / Reject; plan KPI strip (`Kpi`); `.tabs`: Plan · Changes · What-if · Compare COAs | Plan tab: missions by priority (left), package timeline (centre, hand-drawn SVG, one lane per overlapping package, bars outlined by priority glyph colour, dashed when changed by a re-task, violet "now" line = simulated clock), detail (right: package rows, crew, weapons, "Why this package", alternatives, swap for base commanders) |
+| **Missions** (`/missions`) | standard table + filters; "New mission request" modal | "Pick on map" hands the one map the click and returns (no second map, AGENTS §5) |
+| **Exercise** (`/exercise`, ADMIN) | simulator controls, scenarios, running injects, KPI samples, live inject form, after-action reports | AAR (`/exercise/runs/:id`): KPI row, injects, plans, disruptions with proposal and decision time, mission outcomes; CSV + print stylesheet |
+| **Ops map view** (dock key 4) | flyout: simulator clock, committed plan, pending re-task, layer toggles | simulated IAF tracks `--sim`; unknown tracks `--warning`; planned routes `--sim` (proposed dashed); mission areas `--ok` tasked / `--caution` not tasked / `--neutral` requested; threat zones `--base-hostile` outline + fill scaled by risk; airspace `--line` / `--caution` / `--warning` dashed; radar `--info` dotted, AD `--accent` dashed; weather-impact rings in flight-category colours |
+| Top bar | adds Missions, Planner (and Exercise for ADMIN) and the **simulator clock** chip (§7.2): `SIM 14:32 ×60` in `--sim` | |
+| Base panel → Overview | "Tasking today" rows, the "Outlook" (expected defects predicted per tail) and "Snag risk": the five riskiest serviceable tails here with their drivers; values ≥ 2× the base average in `--caution` text | `Row`, `ToneText`, `Sim` badge; always with the "decision support only" line |
+| Planner → package detail | adds "Air-to-air refuelling" (tanker, times, rendezvous, tail, captain, sortie), predicted defect risk beside the tails, "Snag risk" and "Civil traffic" explanation rows; KPI strip adds "Expected defects" and "incl. N tanker sorties" | the swap modal lists each tail's predicted risk |
+| Admin | "Snag-risk model" card: held-out sorties, AUC, top-10 % lift, Brier vs base rate, calibration table (gaps > 3 points in `--caution`), coefficients in words, retrain button | standard table, `Row`, no chart library |
+| Overview | "Missions, next 24 hours": covered / requested by command and priority, values only (FR-CMD-04) | |
+
+Priority vocabulary (urgency, always glyph + word): `■ P1` critical, `◆ P2` warning, `▲ P3` caution, `— P4` neutral.
+Change vocabulary: `— Kept`, `○ Tails / crew swapped`, `▲ Moved`, `● New`, `■ Dropped`, `◆ Divert`, `◆ Re-roled in flight`.
+
+Timeline: tanker legs are separate bars on the tanker's base row with a dotted outline on `--surface-1`; package bars
+dashed when changed. Ops map: tanker tracks dotted `--sim` (`ops-routes-support`). Keyboard: timeline bars, clickable
+rows (`Row` with `onClick`, table rows in Alerts / Overview / Pilots) take focus and activate on Enter or Space; a focused
+bar gets an `--accent` outline; modals move focus in, keep Tab inside and return it to the opener on close.

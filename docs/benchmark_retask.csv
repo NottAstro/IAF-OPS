@@ -1,0 +1,15 @@
+seed,epoch,scale,scenario,issues,check_ms,proposal_ms,rung,kept,changed,dropped,stability,summary,committed
+2026,2026-10-17T06:00:00+00:00,1.0,"Runway closed (busiest base, 30 h)",29,2023,1783,full,40,5,5,0.8,"2 swap, 3 moved, 5 dropped",50
+2026,2026-10-17T06:00:00+00:00,1.0,Pop-up P1 casualty evacuation,7,525,273,partial,45,1,0,0.978,1 new,50
+2026,2026-01-12T01:30:00+00:00,1.0,"Runway closed (busiest base, 30 h)",32,2571,2316,full,38,13,2,0.717,"4 swap, 9 moved, 2 dropped",53
+2026,2026-01-12T01:30:00+00:00,1.0,Pop-up P1 casualty evacuation,7,447,188,partial,51,1,0,0.981,1 new,53
+7,2026-10-17T06:00:00+00:00,1.0,"Runway closed (busiest base, 30 h)",25,2546,2323,full,49,10,5,0.766,"6 swap, 4 moved, 5 dropped",64
+7,2026-10-17T06:00:00+00:00,1.0,Pop-up P1 casualty evacuation,13,491,216,partial,59,1,0,0.983,1 new,64
+7,2026-01-12T01:30:00+00:00,1.0,"Runway closed (busiest base, 30 h)",13,713,456,partial,48,7,1,0.857,"7 moved, 1 dropped",56
+7,2026-01-12T01:30:00+00:00,1.0,Pop-up P1 casualty evacuation,1,461,182,partial,55,1,0,0.982,1 new,56
+42,2026-10-17T06:00:00+00:00,1.0,"Runway closed (busiest base, 30 h)",26,1981,1682,full,35,11,5,0.686,"4 swap, 7 moved, 5 dropped",51
+42,2026-10-17T06:00:00+00:00,1.0,Pop-up P1 casualty evacuation,7,440,176,partial,46,1,0,0.979,1 new,51
+42,2026-01-12T01:30:00+00:00,1.0,"Runway closed (busiest base, 30 h)",31,2986,2741,full,46,10,5,0.754,"4 swap, 6 moved, 5 dropped",61
+42,2026-01-12T01:30:00+00:00,1.0,Pop-up P1 casualty evacuation,13,518,228,partial,56,1,0,0.982,1 new,61
+2026,2026-10-17T06:00:00+00:00,2.5,"Runway closed (busiest base, 30 h)",22,5233,4996,partial,112,9,2,0.911,"9 moved, 2 dropped",123
+2026,2026-10-17T06:00:00+00:00,2.5,Pop-up P1 casualty evacuation,1,461,271,partial,121,1,0,0.992,1 new,123

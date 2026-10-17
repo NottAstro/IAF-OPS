@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api } from "../api/client";
-import { ErrorText, Kpi, Loading, Row, Sim, ToneText } from "../components/ui";
+import { ErrorText, Kpi, Loading, Row, Sim, ToneText, onActivate } from "../components/ui";
 import { sevTone } from "../lib/format";
 import { useStore } from "../store";
 
@@ -13,6 +13,40 @@ interface BaseRow { id: number; code: string; name: string; command: string; lat
   serviceability: number | null; qra_met: boolean | null; qra_postures: number; pilots_available: number; pilots: number; atf_pct: number | null;
   below_reserve: boolean; alerts: number; alerts_critical: number }
 interface Ov { theatre: Roll; commands: (Roll & { code: string; name: string; operational: boolean })[]; bases: BaseRow[] }
+interface OpsSum { rows: { command: string | null; priority: string; total: number; covered: number }[]; committed_plan_id: number | null;
+  open_disruptions: number; pending_retask_id: number | null; pending_retask_summary: string | null }
+
+/** Mission coverage for the next 24 h by command and priority: values only, no scores (FR-CMD-04). */
+function MissionStrip() {
+  const q = useQuery({ queryKey: ["ops-summary"], queryFn: () => api<OpsSum>("/ops/summary"), refetchInterval: 30000 });
+  const nav = useNavigate();
+  if (!q.data) return null;
+  const cmds = ["WAC", "SWAC", "CAC", "EAC", "SAC"];
+  const cell = (c: string | null, p?: string) => {
+    const rs = q.data.rows.filter((r) => (c == null || r.command === c) && (!p || r.priority === p));
+    const t = rs.reduce((a, r) => a + r.total, 0), v = rs.reduce((a, r) => a + r.covered, 0);
+    return t ? <ToneText toneName={v < t ? (p === "P1" ? "critical" : p === "P2" ? "warning" : "caution") : "ok"}>{v}/{t}</ToneText> : <span className="dim">—</span>;
+  };
+  return (
+    <>
+      <h2 className="section-h" style={{ fontSize: "var(--t-h2)" }}>Missions, next 24 hours
+        <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>
+          {q.data.committed_plan_id ? <>tasked by plan <a href="#" onClick={(e) => { e.preventDefault(); nav("/planner"); }}>#{q.data.committed_plan_id}</a></> : "no plan committed"}
+          {q.data.open_disruptions > 0 && <> · <ToneText toneName="warning">{q.data.open_disruptions} open disruptions</ToneText></>}
+          {q.data.pending_retask_id && <> · <a href="#" onClick={(e) => { e.preventDefault(); nav(`/planner?plan=${q.data.pending_retask_id}`); }}>re-task proposal waiting</a></>}
+        </span></h2>
+      <div className="table-wrap" style={{ marginBottom: 16 }}>
+        <table className="table">
+          <thead><tr><th>Covered / requested</th><th className="right">Theatre</th>{cmds.map((c) => <th key={c} className="right">{c}</th>)}</tr></thead>
+          <tbody>
+            {["P1", "P2", "P3", "P4"].map((p) => <tr key={p}><td>{p}</td><td className="num">{cell(null, p)}</td>{cmds.map((c) => <td key={c} className="num">{cell(c, p)}</td>)}</tr>)}
+            <tr><td><b>All</b></td><td className="num">{cell(null)}</td>{cmds.map((c) => <td key={c} className="num">{cell(c)}</td>)}</tr>
+          </tbody>
+        </table>
+      </div>
+    </>
+  );
+}
 
 export function Overview() {
   const q = useQuery({ queryKey: ["overview"], queryFn: () => api<Ov>("/overview"), refetchInterval: 30000 });
@@ -57,6 +91,7 @@ export function Overview() {
         <Kpi large label="Open alerts" value={t.alerts} sub={<><ToneText toneName="critical">{t.alerts_critical}</ToneText> · <ToneText toneName="warning">{t.alerts_warning}</ToneText></>}
           toneName={t.alerts_critical ? "critical" : t.alerts_warning ? "warning" : undefined} onClick={() => nav("/alerts")} />
       </div>
+      <MissionStrip />
       <div className="grid-cmd">
         {q.data.commands.map((c) => (
           <div key={c.code} className="cmd-col" onClick={() => openCommand(c.code)} style={cmd === c.code ? { boxShadow: "inset 0 2px 0 var(--accent)" } : undefined}
@@ -79,7 +114,7 @@ export function Overview() {
             {th("qra_met", "QRA", false)}{th("pilots_available", "Pilots avail.")}{th("atf_pct", "ATF %")}{th("alerts", "Alerts")}</tr></thead>
           <tbody>
             {rows.map((b) => (
-              <tr key={b.id} onClick={() => openBase(b)} style={{ cursor: "pointer" }}>
+              <tr key={b.id} onClick={() => openBase(b)} style={{ cursor: "pointer" }} tabIndex={0} onKeyDown={onActivate(() => openBase(b))}>
                 <td><span className="mono">{b.code}</span> {b.name.replace("Air Force Station ", "")}</td><td>{b.command}</td>
                 <td className="num">{b.aircraft}</td>
                 <td className="num"><ToneText toneName={sevTone(b.serviceability)}>{b.serviceability ?? "—"}</ToneText></td>

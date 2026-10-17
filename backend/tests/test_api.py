@@ -119,3 +119,29 @@ def test_synthetic_sites_stay_inside_buffer():
         G = load_india(s)
         for (g,) in s.execute(text("SELECT ST_AsBinary(geom) FROM air_defence_battery UNION ALL SELECT ST_AsBinary(geom) FROM radar_site")):
             assert G.inner.contains(wkb.loads(bytes(g)))
+
+
+def test_human_sortie_goes_through_the_shared_service():
+    """FR-INV-10: a base commander's sortie is created by services/sorties.py (one set of rules with plan commit):
+    one audit row, its tail on board, launch not in the past."""
+    from datetime import timedelta
+    from app.sim.engine import Simulator
+    from app.ws import hub
+    if not hasattr(app.state, "sim"):
+        app.state.sim = Simulator(hub)
+    a = an_available_aircraft("VIAX")
+    cdr = login("cdr.viax")
+    with SessionLocal() as s:
+        now = s.execute(text("SELECT sim_now()")).scalar()
+        base_id = s.execute(text("SELECT id FROM base WHERE code = 'VIAX'")).scalar()
+    body = {"departure_base_id": base_id, "planned_launch_ts": (now + timedelta(minutes=5)).isoformat(), "aircraft_ids": [a["id"]]}
+    assert cdr.post("/api/v1/sorties", json=body).status_code == 422          # too soon
+    body["planned_launch_ts"] = (now + timedelta(hours=2)).isoformat()
+    r = cdr.post("/api/v1/sorties", json=body)
+    assert r.status_code == 201, r.text
+    sid = r.json()["id"]
+    assert "-U" in r.json()["code"] and len(r.json()["route"]) > 1
+    assert scalar("SELECT count(*) FROM audit_log WHERE entity_type = 'sortie' AND entity_id = :i AND action = 'CREATE'", i=sid) == 1
+    assert scalar("SELECT aircraft_id FROM sortie_aircraft WHERE sortie_id = :i", i=sid) == a["id"]
+    assert scalar("SELECT origin FROM sortie WHERE id = :i", i=sid) == "HUMAN"
+    assert cdr.post(f"/api/v1/sorties/{sid}/cancel").status_code == 200

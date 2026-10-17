@@ -4,9 +4,8 @@ import random
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from geoalchemy2.shape import from_shape, to_shape
+from geoalchemy2.shape import to_shape
 from pydantic import BaseModel
-from shapely.geometry import LineString
 from sqlalchemy import select, text
 from sqlalchemy.orm import Session
 
@@ -15,6 +14,7 @@ from ..audit import audit
 from ..auth import current_user
 from ..db import SessionLocal, get_db
 from ..rbac import assert_edit_base, require
+from ..services import sorties as SV
 from ..sim.engine import family
 from ..sim.routes import plan
 
@@ -144,31 +144,21 @@ def create_sortie(body: SortieIn, request: Request, user: dict = Depends(current
                                       "fields": {"destination_base_id": "Pick another destination"}})
     rng = random.Random(f"human:{base.id}:{launch.isoformat()}")
     pts, dur = plan(sim.G, rng, family(t), body.mission_type, home, dest, t.cruise_kt, body.duration_h)
-    seq = db.execute(text("SELECT coalesce(max(id), 0) + 1 FROM sortie")).scalar()
-    s = M.Sortie(code=f"SIM-{base.code}-U{seq:05d}", origin="HUMAN", mission_type=body.mission_type, priority=body.priority,
-                 mission_id=body.mission_id, departure_base_id=base.id, recovery_base_id=base.id, status="PLANNED",
-                 planned_launch_ts=launch, planned_recovery_ts=launch + timedelta(hours=dur),
-                 route_geom=from_shape(LineString(pts), srid=4326), cruise_alt_m=7000 if family(t) == "fighter" else 3000,
-                 fuel_planned_kg=round(t.burn_kg_per_h * dur * len(aircraft)), is_simulated=True)
-    db.add(s)
-    db.flush()
-    for i, ac in enumerate(aircraft):
-        db.add(M.SortieAircraft(sortie_id=s.id, aircraft_id=ac.id, callsign=f"{base.code}{i + 1}", formation_pos=i + 1))
     positions = {"PILOT": ["CAPTAIN", "CO_PILOT"], "WSO": ["WSO"], "NAVIGATOR": ["NAVIGATOR"],
                  "FLIGHT_ENGINEER": ["FLIGHT_ENGINEER"], "LOADMASTER": ["LOADMASTER"], "RPA_PILOT": ["RPA_PILOT"],
                  "PAYLOAD_OPERATOR": ["PAYLOAD_OPERATOR"], "FLIGHT_GUNNER": ["FLIGHT_GUNNER"]}
     used: dict[str, int] = {}
+    seats = []
     for i, c in enumerate(crew):
         role = c.aircrew_role
         opts = positions.get(role, ["CO_PILOT"])
-        pos = opts[min(used.get(role, 0), len(opts) - 1)]
+        seats.append((c.id, aircraft[min(i, len(aircraft) - 1)].id, opts[min(used.get(role, 0), len(opts) - 1)]))
         used[role] = used.get(role, 0) + 1
-        db.add(M.SortieCrew(sortie_id=s.id, aircrew_id=c.id, aircraft_id=aircraft[min(i, len(aircraft) - 1)].id, position=pos))
-    db.flush()
-    audit(db, user, "CREATE", "sortie", s.id, base.id, None,
-          {"code": s.code, "mission_type": s.mission_type, "priority": s.priority, "launch": launch,
-           "aircraft": [a.tail_no for a in aircraft], "crew": [c.service_no for c in crew]},
-          request_id=request.state.request_id)
+    # one place for sortie creation (services/sorties.py), shared with plan commit
+    s = SV.create(db, user=user, origin="HUMAN", mission_type=body.mission_type, priority=body.priority, base=base,
+                  recovery_base_id=base.id, launch=launch, recovery=launch + timedelta(hours=dur), route=pts,
+                  aircraft=aircraft, crew=seats, fuel_kg=t.burn_kg_per_h * dur * len(aircraft), family=family(t),
+                  mission_id=body.mission_id, tag="U", request_id=request.state.request_id)
     db.commit()
     return {"id": s.id, "code": s.code, "status": s.status, "planned_launch_ts": s.planned_launch_ts,
             "planned_recovery_ts": s.planned_recovery_ts, "route": [list(p) for p in pts]}

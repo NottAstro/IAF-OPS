@@ -12,6 +12,7 @@ import { LayerRail } from "./LayerRail";
 export function MapScreen({ user }: { user: User }) {
   const s = useStore();
   const sel = s.selection;
+  if (s.picking === "mission") return <PickBanner />;
   return (
     <>
       <LayerRail liveTracks={s.liveTracks} />
@@ -20,6 +21,21 @@ export function MapScreen({ user }: { user: User }) {
       {sel && sel.kind !== "base" && <InfoCard sel={sel} liveTracks={s.liveTracks} />}
       <Hud />
     </>
+  );
+}
+
+function PickBanner() {
+  const set = useStore((s) => s.set);
+  useEffect(() => {
+    const k = (e: KeyboardEvent) => { if (e.key === "Escape") { set({ picking: null }); history.back(); } };
+    addEventListener("keydown", k);
+    return () => removeEventListener("keydown", k);
+  }, [set]);
+  return (
+    <div className="pick-banner" role="status">
+      Click the mission area on the map. It must be inside India and clear of the border buffer.
+      <button className="btn btn-sm" onClick={() => { set({ picking: null }); history.back(); }}>Cancel (Esc)</button>
+    </div>
   );
 }
 

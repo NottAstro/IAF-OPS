@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { api } from "../api/client";
+import { zulu } from "../lib/format";
 import { toggleTilt } from "../map/MapView";
 import { LAYERS, LAYER_GROUPS, LIVE_CATS, LIVE_GROUP, type LayerId, type LiveCat, MODES, type Mode, type WxLayer, WX_LAYERS, layerMode, useStore } from "../store";
 
@@ -22,6 +23,8 @@ const VIEW: Record<Mode, { tab: string; hint: string; icon: ReactNode }> = {
     icon: <path d="M7 18.5h10.6a4.1 4.1 0 0 0 .6-8.15A6.1 6.1 0 0 0 6.5 9.6 4.5 4.5 0 0 0 7 18.5z" /> },
   INFRA: { tab: "Infra", hint: "Roads, rail and airports. Select an air base to see its nearest railheads, airports and IAF bases.",
     icon: <><path d="M8 21 11 3M16 21 13 3" /><path d="M12 6.5v2M12 11.5v2.5M12 17v3" /></> },
+  OPS: { tab: "Ops", hint: "The simulated operational picture: planned sorties flying their routes, mission areas, generic threat zones and weather impact. Nothing here is real data.",
+    icon: <><circle cx="12" cy="12" r="7.5" /><circle cx="12" cy="12" r="2.2" /><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4" /></> },
 };
 const SWATCH: Record<LayerId, ReactNode> = {
   highways: <span className="swatch-line" style={{ borderColor: "var(--map-highway)", boxShadow: "0 0 6px var(--map-highway)" }} />,
@@ -41,7 +44,38 @@ const SWATCH: Record<LayerId, ReactNode> = {
   states: <span className="swatch-line" style={{ borderColor: "var(--map-admin1)", borderTopWidth: 1 }} />,
   districts: <span className="swatch-line" style={{ borderColor: "var(--map-admin2)", borderTopStyle: "dashed", borderTopWidth: 1 }} />,
   places: <span className="toggle-count" style={{ color: "var(--map-label)" }}>Aa</span>,
+  "ops-sim": <span className="swatch-dot" style={{ background: "var(--sim)" }} />,
+  "ops-unknown": <span className="swatch-dot" style={{ background: "var(--warning)" }} />,
+  "ops-routes": <span className="swatch-line" style={{ borderColor: "var(--sim)" }} />,
+  "ops-missions": <span className="swatch-dot" style={{ background: "var(--ok)", boxShadow: "0 0 0 2px var(--bg), 0 0 0 3px var(--caution)" }} />,
+  "ops-threat": <span className="swatch" style={{ background: "rgb(248 113 113 / .18)", border: "1px dashed var(--base-hostile)" }} />,
+  "ops-airspace": <span className="swatch" style={{ border: "1px dashed var(--line)" }} />,
+  "ops-radar": <span className="swatch" style={{ borderRadius: "50%", border: "1px dotted var(--info)" }} />,
+  "ops-ad": <span className="swatch" style={{ borderRadius: "50%", border: "1px dashed var(--accent)", background: "var(--accent-tint)" }} />,
+  "ops-wx": <span className="swatch" style={{ borderRadius: "50%", border: "2px solid var(--warning)" }} />,
 };
+
+/** Ops view status: the plan the simulated picture is flying, any re-task waiting, and the simulator clock. */
+function OpsStatus() {
+  const s = useStore();
+  const sum = useQuery({ queryKey: ["ops-summary"], queryFn: () => api<{ committed_plan_id: number | null; open_disruptions: number;
+    pending_retask_id: number | null; pending_retask_summary: string | null }>("/ops/summary"), refetchInterval: 20000 });
+  const d = sum.data;
+  const c = s.simClock;
+  return (
+    <div style={{ margin: "2px 0 6px" }}>
+      <div className="tool-row" style={{ borderTop: 0 }}><span>Simulator clock</span>
+        <b className="mono" style={{ marginLeft: "auto", color: "var(--sim)" }}>{c ? `${zulu(c.sim_now)} ×${c.speed}${c.paused ? " paused" : ""}` : "not running"}</b></div>
+      <div className="tool-row"><span>Committed plan</span>
+        <b className="mono" style={{ marginLeft: "auto", color: "var(--text-1)" }}>{d?.committed_plan_id ? `#${d.committed_plan_id}` : "none"}</b></div>
+      {d?.pending_retask_id && <div className="tool-row" style={{ display: "block" }}>
+        <span className="s-warning">◆ Re-task proposal waiting: {d.pending_retask_summary}</span>
+        <div style={{ marginTop: 4 }}><a href={`/planner?plan=${d.pending_retask_id}`}>Review in the planner ›</a></div></div>}
+      {!d?.committed_plan_id && <div className="toggle-note" style={{ margin: "4px 0 0" }}>No plan committed yet. <a href="/planner">Generate one in the planner ›</a></div>}
+      {d && d.open_disruptions > 0 && <div className="toggle-note" style={{ margin: "4px 0 0" }}>{d.open_disruptions} open disruption{d.open_disruptions > 1 ? "s" : ""}</div>}
+    </div>
+  );
+}
 
 function Switch({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
   return <button type="button" role="switch" aria-checked={on} aria-label={label} className="switch" onClick={(e) => { e.stopPropagation(); onChange(); }} />;
@@ -156,7 +190,10 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
             {s.wx.rain && owm.data && !owm.data.owm && <div className="s-warning" style={{ fontSize: 12, marginTop: 6 }}>◆ Rain needs OWM_API_KEY in .env</div>}
           </>}
 
-          {viewLayers.map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)} />)}
+          {s.mode === "OPS" && <OpsStatus />}
+          {viewLayers.map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)}
+            count={k === "ops-sim" ? s.simTracks.filter((t) => t.kind === "SIM_IAF").length : k === "ops-unknown" ? s.simTracks.filter((t) => t.kind === "SIM_UNKNOWN").length : undefined} />)}
+          {s.mode === "OPS" && <div className="toggle-note" style={{ margin: "6px 0 0" }}><span className="sim-badge">SIM</span> Every object in this view is simulated. Threat zones are generic risk bands and exercise injects, not real deployments.</div>}
 
         </aside>
       )}

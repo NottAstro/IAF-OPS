@@ -1,8 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
-import type { LiveTrack } from "../api/types";
-import { ErrorText, Loading, Row, Sim, ToneText } from "../components/ui";
-import { feet, label, num } from "../lib/format";
+import type { Fix, LiveTrack, MissionRow, PlanItemView, Reason } from "../api/types";
+import { ErrorText, Loading, Pill, Row, Sim, ToneText } from "../components/ui";
+import { RANK, feet, istTime, label, num } from "../lib/format";
 import { type Selection, useStore } from "../store";
 
 function Card({ title, children, sim }: { title: React.ReactNode; children: React.ReactNode; sim?: boolean }) {
@@ -16,6 +16,9 @@ function Card({ title, children, sim }: { title: React.ReactNode; children: Reac
 }
 
 export function InfoCard({ sel, liveTracks }: { sel: NonNullable<Selection>; liveTracks: LiveTrack[] }) {
+  if (sel.kind === "mission") return <MissionCard id={sel.id} />;
+  if (sel.kind === "route") return <RouteCard id={sel.id} />;
+  if (sel.kind === "simtrack") return <SimTrackCard id={sel.id} />;
   if (sel.kind === "public-base") return <PublicBase id={sel.id} />;
   if (sel.kind === "live") return <LiveCard track={liveTracks.find((t) => t.hex === sel.hex)} hex={sel.hex} />;
   if (sel.kind === "wx") return <WxCard lat={sel.lat} lon={sel.lon} />;
@@ -32,6 +35,71 @@ export function InfoCard({ sel, liveTracks }: { sel: NonNullable<Selection>; liv
     );
   }
   return null;
+}
+
+// ---------------------------------------------------------------- Phase 2: operations view cards (all simulated)
+function MissionCard({ id }: { id: number }) {
+  const q = useQuery({ queryKey: ["missions", "one", id], queryFn: () => api<MissionRow & { unmet: { reasons: Reason[]; fixes: Fix[] } | null }>(`/ops/missions/${id}`) });
+  if (!q.data) return <Card title="Mission" sim>{q.error ? <ErrorText error={q.error} /> : <Loading />}</Card>;
+  const m = q.data;
+  return (
+    <Card title={<span className="mono">{m.code}</span>} sim>
+      <div className="muted" style={{ margin: "2px 0 6px" }}>{m.name}</div>
+      <Row label="Priority / type" value={`${m.priority} · ${label(m.mission_type)}`} />
+      <Row label="Window" value={`${istTime(m.window_start, true)} – ${istTime(m.window_end)}`} />
+      <Row label="Needs" value={`${m.required_aircraft} aircraft, ${m.on_station_min} min on station`} />
+      <Row label="Status" value={<Pill status={m.status === "TASKED" || m.status === "ACTIVE" ? "OPERATIONAL" : m.status === "REQUESTED" ? "PLANNED" : "CAUTION"} text={label(m.status)} />} />
+      {m.tasked_base && <Row label="Tasked" value={`${m.tasked_n} × ${m.tasked_type} from ${m.tasked_base}`} />}
+      {m.sortie_code && <Row label="Sortie" value={<><span className="mono">{m.sortie_code}</span> <Pill status={m.sortie_status} /></>} />}
+      {m.unmet && <>
+        <div className="section-h" style={{ fontSize: 13 }}>Why not tasked</div>
+        {m.unmet.reasons.slice(0, 2).map((r) => <div key={r.code} className="dim" style={{ fontSize: 12, margin: "2px 0" }}>▲ {r.text}{r.examples[0] ? `: ${r.examples[0]}` : ""}</div>)}
+        {m.unmet.fixes[0] && <div className="s-info" style={{ fontSize: 12, marginTop: 4 }}>○ {m.unmet.fixes[0].text}</div>}
+      </>}
+      <div style={{ marginTop: 8 }}><a href={`/missions?focus=${m.id}`}>Open in missions ›</a></div>
+    </Card>
+  );
+}
+
+function RouteCard({ id }: { id: number }) {
+  const q = useQuery({ queryKey: ["plan", "item", id], queryFn: () => api<PlanItemView>(`/ops/plan-items/${id}`) });
+  if (!q.data) return <Card title="Package" sim>{q.error ? <ErrorText error={q.error} /> : <Loading />}</Card>;
+  const it = q.data;
+  return (
+    <Card title={<span className="mono">{it.mission.code}</span>} sim>
+      <div className="muted" style={{ margin: "2px 0 6px" }}>{it.mission.name}</div>
+      <Row label="Package" value={`${it.n_aircraft} × ${it.type.name} from ${it.base.code}`} />
+      <Row label="Launch / recover" value={`${istTime(it.launch_ts)} – ${istTime(it.recovery_ts)}`} />
+      <Row label="Tails" value={<span className="mono">{it.aircraft.map((a) => a.tail_no).join(", ")}</span>} />
+      <Row label="Crew" value={it.crew.filter((c) => ["CAPTAIN", "INSTRUCTOR", "RPA_PILOT"].includes(c.position)).map((c) => `${RANK[c.rank] ?? c.rank} ${c.name}`).join(", ") || "—"} />
+      {it.sortie && <Row label="Sortie" value={<><span className="mono">{it.sortie.code}</span> <Pill status={it.sortie.status} /></>} />}
+      {it.explanation?.rows.slice(0, 3).map((r) => <Row key={r.label} label={r.label} value={r.value} />)}
+      <div style={{ marginTop: 8 }}><a href={`/planner?plan=current&item=${it.id}`}>Open in planner ›</a></div>
+    </Card>
+  );
+}
+
+function SimTrackCard({ id }: { id: string }) {
+  const t = useStore((s) => s.simTracks.find((x) => x.track_id === id));
+  if (!t) return <Card title="Simulated track" sim><div className="empty">Track has landed or left the picture.</div></Card>;
+  return (
+    <Card title={<span className="mono">{t.callsign}</span>} sim>
+      {t.kind === "SIM_UNKNOWN" ? <>
+        <div className="notice" style={{ margin: "4px 0" }}>Simulated unknown track: it approaches the border and turns away. It never crosses into India.</div>
+        <Row label="Phase" value={label(t.phase)} />
+        <Row label="Detected" value={t.detected ? "Yes, inside radar cover" : "Not yet"} />
+        {t.interceptor_base && <Row label="QRA scrambled from" value={t.interceptor_base} />}
+      </> : <>
+        <Row label="Aircraft" value={`${t.type ?? "—"} · ${t.tail_no ?? ""}`} />
+        <Row label="Sortie" value={<span className="mono">{t.sortie_code}</span>} />
+        <Row label="Mission" value={label(t.mission_type)} />
+        <Row label="Phase / status" value={`${label(t.phase)} · ${label(t.status)}`} />
+        <Row label="From" value={t.base ?? "—"} />
+      </>}
+      <Row label="Altitude / speed" value={`${feet(t.alt_m)} · ${num(t.gs_kt)} kt`} />
+      <Row label="Heading" value={`${num(t.heading_deg)}°`} />
+    </Card>
+  );
 }
 
 function PublicBase({ id }: { id: number }) {
