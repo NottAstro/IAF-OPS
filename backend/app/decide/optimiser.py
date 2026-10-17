@@ -183,7 +183,7 @@ def base_model(st: OpsState, cands_by_mission: dict, rows: list | None = None, c
 def solve(st: OpsState, cands_by_mission: dict, preset: str = "BALANCED", forbid: set | None = None,
           fixed: dict | None = None, stability: dict | None = None, time_s: float = D.SOLVER_TIME_S,
           workers: int = D.SOLVER_WORKERS, seed: int = 0, rows: list | None = None, base: Base | None = None,
-          cover_fixed: dict | None = None) -> Solution:
+          cover_fixed: dict | None = None, hint: set | None = None) -> Solution:
     """forbid: candidate idx never chosen. fixed: mission_id -> candidate idx that must be chosen (frozen items).
     stability: mission_id -> (base_id, type_id, launch) of the committed package; matching candidates get a bonus.
     rows / base: build_constraints() output, or the whole base model, when the caller re-solves the same candidates
@@ -202,6 +202,9 @@ def solve(st: OpsState, cands_by_mission: dict, preset: str = "BALANCED", forbid
     for mid, i in fixed.items():
         if i in y:
             model.Add(y[i] == 1)
+    if hint is not None:                       # warm start from the previous retry's choice (minus what is now forbidden)
+        for i, v in y.items():
+            model.AddHint(v, 1 if i in hint and i not in forbid else 0)
     solver = cp_model.CpSolver()
     solver.parameters.max_time_in_seconds = time_s
     solver.parameters.num_workers = workers

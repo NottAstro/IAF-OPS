@@ -24,6 +24,8 @@ A prototype for Smart India Hackathon 2026, problem statement **SIH26250** ("Air
 
 > **All operational data is SIMULATED.** Base names and locations are public (Wikipedia, OurAirports). Everything inside a base (aircraft, crew, fuel, stores, AD, radar) is generated. All people are fictional.
 
+**How this answers SIH26250:** [solution report](docs/SOLUTION_REPORT.md)
+
 Docs: [PRD](docs/PRD.md) · [Data model](docs/DATA_MODEL.md) · [Architecture](docs/ARCHITECTURE.md) · [Free APIs](docs/API.md) · [Design system](docs/DESIGN_SYSTEM.md) · [Build plan](docs/IMPLEMENTATION_PLAN.md) · [Agent rules](AGENTS.md)
 
 ## Run it

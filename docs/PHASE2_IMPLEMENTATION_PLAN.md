@@ -46,10 +46,10 @@ for the simulator, generic threats and loadouts, COMMAND_HQ approves, 24 h / 15 
 
 | Phase after that (D45–D47) | Done: launch waves (one rule shared by optimiser and validator); air tasking order (print view, CSV, per base, DRAFT until committed); containerised deployment (`docker compose --profile full up -d --build`, web on :8080, first-start pipeline and seed) | `optimiser.wave_slots`, `decide/ato.py`, `pages/Ato.tsx`, `deploy/` |
 
-**Measured after D41–D44 ([BENCHMARK](BENCHMARK.md), same harness; each seeded day now also has a 6 h CAP and a flood-relief surge, split with the checked fixes first):**
-- **Plans:** 90.3 % of missions covered on normal days (P1 91 %), 0 violations in 35 plans, deterministic 7 of 7; the seeded day plans in 4.3 s, normal days 2.4–9.3 s cold. CP-SAT matches or beats greedy in all 7 runs (better in 2, worse in 0); the surge day (154 missions) covers 131 vs 129 in 28 s.
-- **Re-task proposals:** runway closure 0.7–3.9 s (mean 2.8 s), 80 % of the plan untouched; pop-up P1 0.3–0.7 s.
-- **Split missions:** the seeded 6 h CAP is flown as two Su-30MKI reliefs from Halwara (08:00–11:15 and 11:00–14:00Z); the 16-helicopter flood surge as 8 Dhruv from Sarsawa plus 8 Mi-17V-5 from Hindan, on station together.
+**Measured now (after D45–D47; [BENCHMARK](BENCHMARK.md): 3 seeds × 2 epochs + a 2.5× surge day; each seeded day also has a 6 h CAP and a flood-relief surge, split with the checked fixes first):**
+- **Plans:** 89.2 % of missions covered on normal days (P1 91 %), 0 violations in 35 plans, deterministic 7 of 7; every normal-day plan 2.4–6.9 s including a cold route cache (target < 10 s); the seeded day 2.7 s. CP-SAT matches or beats greedy in all 7 runs (+3 missions); the surge day (154 missions) covers 131 vs 129 in 16 s (was 28 s before warm-started retries).
+- **Re-task proposals:** runway closure 0.7–3.4 s (mean 2.4 s), 81 % of the plan untouched; pop-up P1 0.2–0.5 s, 98 % untouched; 13 s for a runway closure on the surge day (target 15 s).
+- **Split missions:** the seeded 6 h CAP flies as two Su-30MKI reliefs with a 15 min handover; the 28-helicopter flood surge as parts from Sarsawa and Hindan, launching in waves.
 - **Manual baseline:** the tool is ready (Planner → Manual baseline); no human sessions recorded yet, so BENCHMARK.md says so.
 
 **Measured in the next phase ([BENCHMARK](BENCHMARK.md): 3 seeds × 2 epochs + a 2.5× surge day, simulated data):**

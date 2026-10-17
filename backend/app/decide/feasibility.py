@@ -341,7 +341,7 @@ def generate(st: OpsState, preset: str = "BALANCED", mission_ids: set | None = N
                     quals = set(m.min_quals) | ({"AAR_RECEIVER"} if aar else set())
                     support = None
                     if aar:
-                        support, why = tanker_leg(st, route, out_km, t_l, speed, usable)
+                        support, why = tanker_leg(st, route, out_km, t_l + timedelta(hours=hold_h), speed, usable)   # after the join-up (D45)
                         if support is None:
                             rejects[m.id].append(Rejection(b.id, t.id, "NO_TANKER", why))
                             continue

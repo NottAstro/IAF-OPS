@@ -34,6 +34,8 @@ with sync_playwright() as p:
     pg.wait_for_selector("text=missions covered in", timeout=90000)
     pg.wait_for_timeout(2500)
     pg.screenshot(path=str(OUT / "02-planner-plan.png"))
+    pg.get_by_role("tab", name="Plan", exact=True).click()   # a pending re-task opens the Changes tab
+    pg.wait_for_timeout(500)
     rows = pg.locator(".mission-row:not(.unmet)")
     if rows.count():
         rows.first.click()

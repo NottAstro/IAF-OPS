@@ -68,9 +68,11 @@ def plan(st: S.OpsState, preset: str = "BALANCED", stability: dict | None = None
     outside = {m.depends_on for m in st.missions.values() if m.depends_on} - scope
     cover = st.cover_of({x for s in outside for x in st.family_of(s)} | outside) if outside else {}
     base = O.base_model(sub, view, cover_fixed=cover)    # once: retries only forbid options
-    for _ in range(5):
+    hint = None
+    for _ in range(D.PLAN_RETRIES):
         sol = O.solve(sub, view, preset, forbid=forbid, stability=stability, workers=workers, seed=seed, time_s=time_s,
-                      base=base)
+                      base=base, hint=hint)
+        hint = {c.idx for c in sol.selected.values()}
         assignments, fails = assign_all(sub, sol.selected, keep)
         if not fails:
             # the independent validator has the last word; an option it rejects is forbidden and the model re-solved
