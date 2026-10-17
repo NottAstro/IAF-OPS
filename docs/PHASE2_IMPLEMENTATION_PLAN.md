@@ -44,6 +44,8 @@ for the simulator, generic threats and loadouts, COMMAND_HQ approves, 24 h / 15 
 
 | Phase after that (D41–D44) | Done: AEW&C support dependencies (optimiser link rows, validator `DEPENDENCY`, joint re-tasking); split missions as reliefs or parts from several bases, offered as checked fixes and applied by a person, covered all or nothing; manual planning baseline (timed sessions judged by the real rules, beside the optimiser, exported to the benchmark); optional OpenAIP airspace import; fill pass with displacement; launch-rate rejection in feasibility; helicopter packages of 4+ crewable | `decide/split.py`, `manual.py`, `airspace_import.py`, `optimiser.py`, `planner.py`, `features/manual.tsx` |
 
+| Phase after that (D45–D47) | Done: launch waves (one rule shared by optimiser and validator); air tasking order (print view, CSV, per base, DRAFT until committed); containerised deployment (`docker compose --profile full up -d --build`, web on :8080, first-start pipeline and seed) | `optimiser.wave_slots`, `decide/ato.py`, `pages/Ato.tsx`, `deploy/` |
+
 **Measured after D41–D44 ([BENCHMARK](BENCHMARK.md), same harness; each seeded day now also has a 6 h CAP and a flood-relief surge, split with the checked fixes first):**
 - **Plans:** 90.3 % of missions covered on normal days (P1 91 %), 0 violations in 35 plans, deterministic 7 of 7; the seeded day plans in 4.3 s, normal days 2.4–9.3 s cold. CP-SAT matches or beats greedy in all 7 runs (better in 2, worse in 0); the surge day (154 missions) covers 131 vs 129 in 28 s.
 - **Re-task proposals:** runway closure 0.7–3.9 s (mean 2.8 s), 80 % of the plan untouched; pop-up P1 0.3–0.7 s.
@@ -61,7 +63,6 @@ for the simulator, generic threats and loadouts, COMMAND_HQ approves, 24 h / 15 
 - run manual planning sessions with real planners (team task; the tool and the report section are ready)
 - an OpenAIP key (or export) to load published airspace; synthetic zones are used until then
 - organiser sign-off on the generic threat bands and loadouts (§17 rows 2–3)
-- waves: one package launching over several slots (today a package launches in one 15-minute slot; bigger ones are split across bases)
 
 ---
 

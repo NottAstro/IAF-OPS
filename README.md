@@ -17,6 +17,8 @@ A prototype for Smart India Hackathon 2026, problem statement **SIH26250** ("Air
 - **Public airspace** (optional): `python -m app.decide.airspace_import` with `OPENAIP_API_KEY` adds published prohibited / restricted / danger and civil terminal airspace
 - **Predictive maintenance**: a snag-risk model learned from the maintenance log ([model card](docs/MODEL_CARD_SNAG_RISK.md)) gives P1/P2 packages the most reliable tails and feeds the forecasts
 - **What-if and COA comparison**, **72 h forecasts**, and an **exercise mode** for directing staff (scenario injects, after-action report)
+- **Air tasking order**: a printable order per plan, theatre-wide or per base, with a briefing card per package (callsigns, tails, crew, times, waypoints, tanker meeting point) and CSV
+- **Launch waves**: big packages take off over successive 15-minute slots and join up
 - **Measured**: [benchmark](docs/BENCHMARK.md) over several seeded days and a surge day (`python -m app.bench`)
 - the tick simulator flies the committed plan in the **Ops** map view; the Live view stays real data only
 
@@ -35,6 +37,13 @@ powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # backend tests + t
 To skip the boundary pipeline on a second machine: `scripts\dbdump.ps1` on the first, copy `data\dumps\airops.dump`, then `scripts\setup.ps1 -Restore`.
 
 **Phase 2 in five minutes:** sign in as `airhq` → **Planner** → *Generate plan* → open a package ("Why this package") and an uncovered mission ("What would fix it") → *Commit plan* → **Map → Ops** to see the routes. Sign in as `admin` in another browser → **Exercise** → start *Runway closure and pop-up tasking* (×60) → back in the Planner, review and commit each re-task proposal → **Exercise → After-action report**.
+
+**Everything in containers (any OS with Docker):**
+```bash
+docker compose --profile full up -d --build    # database, API, web, wind; first start runs the GIS pipeline and the seed (~10 min)
+# open http://localhost:8080 and sign in (demo users and password in .env.example)
+docker compose --profile full down             # stop (data stays in the pgdata volume)
+```
 
 **macOS, already set up on this machine:**
 ```bash

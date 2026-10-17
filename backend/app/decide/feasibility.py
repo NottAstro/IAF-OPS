@@ -114,6 +114,7 @@ class Candidate:
     turnaround: int = 45
     support: SupportLeg | None = None
     traffic: dict | None = None             # civil traffic along the route (D39): level, where, why
+    waves: int = 1                          # D45: launch waves (1 = the whole package in one slot)
 
 
 @dataclass
@@ -248,10 +249,13 @@ def generate(st: OpsState, preset: str = "BALANCED", mission_ids: set | None = N
                 if n_have < m.required:
                     rejects[m.id].append(Rejection(b.id, t.id, "NOT_ENOUGH_AIRCRAFT", f"{n_have} of {m.required} {t.name}"))
                     continue
-                if m.required > b.runways * D.LAUNCH_CAP_PER_RUNWAY:      # one package launches inside one slot (D36)
+                per_slot = max(1, b.runways * D.LAUNCH_CAP_PER_RUNWAY)
+                waves = -(-m.required // per_slot)                          # D45: launch in waves, join up, then go
+                if waves > D.MAX_WAVES:
                     rejects[m.id].append(Rejection(b.id, t.id, "LAUNCH_RATE",
-                                                   f"{m.required} aircraft; {b.code} launches {b.runways * D.LAUNCH_CAP_PER_RUNWAY} per 15 min"))
+                                                   f"{m.required} aircraft; {b.code} launches {per_slot} per 15 min ({D.MAX_WAVES} waves at most)"))
                     continue
+                hold_h = (waves - 1) * D.SLOT_MIN / 60                     # the first wave holds while the others join
                 home = (b.lon, b.lat)
                 d = dist_km(home, m.target)
                 aar = False
@@ -267,7 +271,7 @@ def generate(st: OpsState, preset: str = "BALANCED", mission_ids: set | None = N
                     continue
                 rlen = length_km(route)
                 out_km = length_km(route[:2]) if m.target_base_id else rlen / 2
-                transit_out = out_km / speed + D.OVERHEAD_H / 2
+                transit_out = out_km / speed + D.OVERHEAD_H / 2 + hold_h
                 transit_back = (rlen - out_km) / speed + D.OVERHEAD_H / 2
                 dur = transit_out + transit_back + m.on_station_min / 60
                 burn = min(t.burn, t.max_fuel / max(t.endurance_h, 0.1))   # consistent with the type's endurance
@@ -378,6 +382,7 @@ def generate(st: OpsState, preset: str = "BALANCED", mission_ids: set | None = N
                     c.turnaround = t.turnaround_min
                     c.support = support
                     c.traffic = TR.describe(st.traffic, route, prof, lw) if prof else None
+                    c.waves = waves
                     idx += 1
                     mine.append(c)
         mine.sort(key=lambda c: (c.cost, c.idx))

@@ -571,7 +571,7 @@ Your required elements, mapped to where each is shown and the entity it comes fr
 ---
 
 ## 17. Phase 2: decision support (SIH26250 "dynamic air operations and resource optimisation")
-Design and rationale: [PHASE2_IMPLEMENTATION_PLAN](PHASE2_IMPLEMENTATION_PLAN.md). Decision records: ARCHITECTURE D28–D44.
+Design and rationale: [PHASE2_IMPLEMENTATION_PLAN](PHASE2_IMPLEMENTATION_PLAN.md). Decision records: ARCHITECTURE D28–D47.
 Measured results: [BENCHMARK](BENCHMARK.md), [MODEL_CARD_SNAG_RISK](MODEL_CARD_SNAG_RISK.md).
 Everything is advisory: a person approves every change, and every approval is audited.
 
@@ -600,6 +600,8 @@ Everything is advisory: a person approves every change, and every approval is au
 | FR-PLN-10 | S | P1/P2 packages are given the free tails least likely to develop a defect (snag-risk model, FR-FCT-03); the risk per tail and per package is shown (D38). |
 | FR-PLN-12 | S | Split missions: a mission no single package can fly is offered a checked split, as reliefs in time (continuous cover, 15 min handovers) or as parts from different bases on station together; applying it is a human action; parts are covered all or nothing (D42). |
 | FR-PLN-13 | M | Manual planning baseline: a timed manual session on the same snapshot, judged by the same rules, stored beside the optimiser's result and reported in the benchmark (PS-8, D43). |
+| FR-PLN-14 | M | Air tasking order: a printable order (and CSV) for a plan, theatre-wide or per base, one briefing entry per package (callsigns, tails, crew, times, waypoints, loadout, tanker meeting point, notes); DRAFT until committed (D46). |
+| FR-PLN-15 | S | Packages bigger than a base's launch rate take off in up to three waves and join up (D45). |
 | FR-PLN-11 | S | Civil traffic: routes through busy civil airspace (airport terminal areas, live ADS-B density for near-term launches) cost more, so quieter options win when otherwise close; the explanation names the busy spot (D39). |
 
 ### FR-RTK: dynamic re-tasking
@@ -646,4 +648,5 @@ Everything is advisory: a person approves every change, and every approval is au
 7. "Which of my tails are most likely to go unserviceable, and did the P1 packages get the reliable ones?" (base panel snag risk, package explanation)
 8. "Nobody can hold a 6-hour CAP: what now?" (uncovered → "Split into 2 reliefs" → apply → re-plan)
 9. "How much faster is this than planning by hand?" (Planner → Manual baseline, then BENCHMARK.md)
+10. "Give Halwara its orders for tomorrow." (Planner → Air tasking order → base VIHX → Print)
 

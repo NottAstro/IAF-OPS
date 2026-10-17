@@ -3,6 +3,7 @@ Planner, Missions, Overview, the Ops map view and Exercise. Needs the stack runn
     pip install playwright && python -m playwright install chromium
 Usage: python scripts/ui_smoke.py data/screens
 Exits non-zero on any page error."""
+import os
 import sys
 import time
 from pathlib import Path
@@ -11,7 +12,7 @@ from playwright.sync_api import sync_playwright
 
 OUT = Path(sys.argv[1])
 OUT.mkdir(parents=True, exist_ok=True)
-BASE = "http://localhost:5173"
+BASE = os.environ.get("SMOKE_BASE", "http://localhost:5173")   # http://localhost:8080 for the container stack
 errors = []
 
 with sync_playwright() as p:

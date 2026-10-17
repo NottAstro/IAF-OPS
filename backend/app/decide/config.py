@@ -27,6 +27,7 @@ LAUNCH_CAP_PER_RUNWAY = 8
 RELIEF_HANDOVER_MIN = 15       # D42: a relief arrives this long before the package it relieves leaves
 RELIEF_MIN_SHIFT = 45          # shortest relief worth flying
 SPLIT_MAX_PARTS = 4
+MAX_WAVES = 3                  # D45: a package bigger than a slot's launch rate takes off in up to this many waves
 SPLIT_HEADROOM = 0.8            # a base part takes at most this share of the base's free aircraft and crews
 SNAG_AWARE = ("P1", "P2")      # these packages take the tails least likely to go U/S (D38)
 SNAG_BAND = 0.02               # risk differences under 2 points don't override fleet-hours balancing

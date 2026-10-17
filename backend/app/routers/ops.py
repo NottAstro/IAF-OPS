@@ -596,6 +596,21 @@ def base_forecast(base_id: int, hours: int = 72, user: dict = Depends(current_us
     return FC.base(db, st, base_id, min(hours, 96))
 
 
+# ================================================================== air tasking order (D46)
+@router.get("/plans/{pid}/ato")
+def plan_ato(pid: int, base_id: int | None = None, format: str = "json", user: dict = Depends(current_user),
+             db: Session = Depends(get_db)):
+    """The plan as an air tasking order: theatre-wide, or the packages one base flies (and the tankers it sends)."""
+    from ..decide import ato as ATO
+    if user["role"] == "BASE_COMMANDER" and base_id is None:
+        base_id = user["base_id"]
+    out = ATO.build(db, pid, base_id)
+    if format == "csv":
+        return StreamingResponse(iter([ATO.to_csv(out)]), media_type="text/csv",
+                                 headers={"Content-Disposition": f'attachment; filename="ato-plan{pid}{f"-base{base_id}" if base_id else ""}.csv"'})
+    return out
+
+
 # ================================================================== manual planning baseline (D43, PS-8)
 class ManualPicks(BaseModel):
     picks: list[dict] = []

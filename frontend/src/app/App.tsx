@@ -13,6 +13,7 @@ import { useStore } from "../store";
 import { MapView } from "../map/MapView";
 import { Admin } from "../pages/Admin";
 import { Alerts, Audit } from "../pages/Alerts";
+import { Ato } from "../pages/Ato";
 import { AfterAction, Exercise } from "../pages/Exercise";
 import { Missions } from "../pages/Missions";
 import { Planner } from "../pages/Planner";
@@ -58,6 +59,7 @@ function Authed({ user }: { user: User }) {
             <Route path="/overview" element={<Overview />} />
             <Route path="/missions" element={<Missions user={user} />} />
             <Route path="/planner" element={<Planner user={user} />} />
+            <Route path="/planner/ato/:pid" element={user.role === "VIEWER" ? <Navigate to="/map" /> : <Ato user={user} />} />
             <Route path="/exercise" element={user.role === "ADMIN" ? <Exercise /> : <Navigate to="/map" />} />
             <Route path="/exercise/runs/:id" element={user.role === "VIEWER" ? <Navigate to="/map" /> : <AfterAction />} />
             <Route path="/inventory" element={<Navigate to="/inventory/aircraft" replace />} />

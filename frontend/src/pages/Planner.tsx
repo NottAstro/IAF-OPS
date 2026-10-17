@@ -112,6 +112,7 @@ export function Planner({ user }: { user: User }) {
           <span><b>Plan #{p.plan.id}</b> · {label(p.plan.kind)} · <Pill status={p.plan.status === "COMMITTED" ? "OPERATIONAL" : p.plan.status === "PROPOSED" ? "PLANNED" : p.plan.status === "REJECTED" ? "CRITICAL" : "STANDBY"} text={label(p.plan.status)} /></span>
           <span className="muted">Horizon {istTime(p.plan.horizon_start, true)} – {istTime(p.plan.horizon_end, true)} (simulated time) · preset {PRESET_LABEL[p.plan.preset] ?? p.plan.preset}</span>
           {p.plan.committed_at && <span className="muted">committed {istTime(p.plan.committed_at, true)}</span>}
+          {p.plan.kind !== "WHATIF" && user.role !== "VIEWER" && <a className="btn btn-sm" href={`/planner/ato/${p.plan.id}`}>Air tasking order</a>}
         </div>
         <PlanKpiStrip k={p.plan.kpis} extra={p.plan.kind === "RETASK" && p.plan.kpis.changes ? (
           <div className="kpi"><div className="kpi-label">Re-task</div><div className="kpi-value" style={{ fontSize: 15 }}>{p.plan.summary}</div>

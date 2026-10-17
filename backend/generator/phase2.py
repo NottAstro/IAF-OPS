@@ -246,7 +246,7 @@ def generate(conn, W, t0: datetime, G, cmd_id: dict, own: dict, types: dict) -> 
     rng = R("split", str(day0.date()))
     for kind, cmd, need, hold, length, label, kmin, kmax in (
             ("AIR_DEFENCE_PATROL", "WAC", 2, 360, 8.0, "Continuous CAP (6 h)", 70, 130),
-            ("HADR", "WAC", 16, 60, 6.0, "Flood relief surge (Yamuna plains)", None, None)):
+            ("HADR", "WAC", 28, 60, 6.0, "Flood relief surge (Yamuna plains)", None, None)):
         if kind == "HADR":                       # Yamuna flood plain: in reach of the helicopter bases at Sarsawa and Hindan
             target = (77.55, 29.4)
         else:

@@ -54,6 +54,18 @@ def launch_capacity(st: OpsState, base_id: int, slot: datetime) -> int:
     return max(0, D.LAUNCH_CAP_PER_RUNWAY * st.bases[base_id].runways - used)
 
 
+def wave_slots(st: OpsState, base_id: int, n: int, launch: datetime) -> list[tuple[datetime, int]]:
+    """D45: how a package of n aircraft takes off: a full slot's worth of runway launches per 15-minute slot from the first
+    launch on. The optimiser's launch rows and the validator both use this, so they mean the same thing (D40)."""
+    cap = max(1, D.LAUNCH_CAP_PER_RUNWAY * st.bases[base_id].runways) if base_id in st.bases else max(1, n)
+    out, k = [], 0
+    while n > 0:
+        out.append((slot_of(launch + timedelta(minutes=k * D.SLOT_MIN)), min(cap, n)))
+        n -= cap
+        k += 1
+    return out
+
+
 def draws(c: Candidate) -> list:
     """Everything a candidate takes from shared pools: the package itself and any support leg (tanker)."""
     return [c] + ([c.support] if c.support is not None else [])
@@ -68,7 +80,8 @@ def build_constraints(st: OpsState, cands: list[Candidate]):
         for d in draws(c):
             by_ac[(d.base_id, d.type_id)].append((c, d))
             by_fuel[d.base_id].append((c, d.fuel_l))
-            by_launch[(d.base_id, slot_of(d.launch))].append((c, d.n))
+            for slot, k in wave_slots(st, d.base_id, d.n, d.launch):
+                by_launch[(d.base_id, slot)].append((c, k))
         if c.zone_id is not None:
             by_zone[c.zone_id].append(c)
         for cat in c.weapons:

@@ -524,3 +524,50 @@ def test_public_airspace_import():
             db.commit()
             TR._STATIC.clear()
         assert db.execute(text("SELECT count(*) FROM airspace_zone")).scalar() == before
+
+
+def test_big_packages_launch_in_waves():
+    """D45: a package bigger than a base's launch rate takes off in waves (8 per runway per 15 min); the optimiser's rows and
+    the validator count the same slots, and the explanation says so."""
+    from dataclasses import replace
+    from app.decide.optimiser import wave_slots
+    st = snap().clone()
+    m = next(m for m in st.missions.values() if m.mission_type == "HADR" and not m.part and not m.depends_on)
+    st.missions = {m.id: replace(m, required=12)}
+    res = plan(st)
+    assert res.items, res.unmet
+    it, c = res.items[0], res.selected[m.id]
+    cap = 8 * st.bases[it["base_id"]].runways
+    slots = wave_slots(st, it["base_id"], 12, c.launch)
+    assert [k for _, k in slots] == ([12] if cap >= 12 else [cap, 12 - cap])
+    assert all((b[0] - a[0]).total_seconds() == 900 for a, b in zip(slots, slots[1:]))
+    if cap < 12:
+        assert "2 waves" in {r["label"]: r for r in it["explanation"]["rows"]}["Launch"]["value"]
+    spec = P.spec(c, res.assignments[m.id], "big")
+    assert not [v for v in validate(st, [spec]) if v.rule == "LAUNCH_RATE"]
+    # another full slot's worth launching in the last wave's slot crowds the runway: the validator sees it
+    last = slots[-1][0]
+    crowd = replace(spec, key="crowd", launch=last, aircraft=[-(i + 1) for i in range(cap)], crew=[])
+    assert any(v.rule == "LAUNCH_RATE" for v in validate(st, [spec, crowd]))
+
+
+def test_air_tasking_order():
+    """D46: the plan as an air tasking order: every package with times, tails, crew and named waypoints; per-base filter;
+    a base commander gets their own base; CSV is marked SIMULATED; an uncommitted plan is a DRAFT."""
+    with SessionLocal() as db:
+        res = P.plan(S.build(db), workers=1, seed=0)
+        pid = P.store(db, res, preset="BALANCED", user={"id": 2})
+        db.commit()
+    air = login("airhq")
+    a = air.get(f"/api/v1/ops/plans/{pid}/ato").json()
+    assert a["draft"] and len(a["packages"]) == len(res.items) and a["scope"] == "Theatre"
+    p = a["packages"][0]
+    assert p["tails"] and p["crew"] and p["launch"] < p["land"] and len(p["waypoints"]) >= 2 and "°" in p["waypoints"][0]["pos"]
+    b = res.items[0]["base_id"]
+    one = air.get(f"/api/v1/ops/plans/{pid}/ato?base_id={b}").json()
+    assert one["packages"] and all(x["base"] == one["scope"].split()[0] or (x["tanker"] or {}).get("base") == one["scope"].split()[0]
+                                   for x in one["packages"])
+    csv_ = air.get(f"/api/v1/ops/plans/{pid}/ato?format=csv")
+    assert csv_.status_code == 200 and csv_.text.startswith("# SIMULATED") and csv_.text.count("\n") >= len(res.items) + 2
+    cdr = login("cdr.viax").get(f"/api/v1/ops/plans/{pid}/ato").json()
+    assert cdr["scope"].startswith("VIAX")

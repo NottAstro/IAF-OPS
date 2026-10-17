@@ -113,7 +113,7 @@ def _sizes_by_base(st: OpsState, m: Mission, t0: datetime) -> list[int] | None:
     for c in probe[-1]:               # free at launch, with pilots for them (the optimiser's own capacity rows)
         ac = aircraft_capacity(st, c.base_id, c.type_id, c.ac_iv[0])
         crews = crew_capacity(st, c.base_id, c.type_id, c.req, c.cr_iv[0]) // max(1, pilots_per_aircraft(st.types[c.type_id]))
-        launch = st.bases[c.base_id].runways * D.LAUNCH_CAP_PER_RUNWAY       # a part launches inside one slot
+        launch = st.bases[c.base_id].runways * D.LAUNCH_CAP_PER_RUNWAY * D.MAX_WAVES   # a part may launch in waves (D45)
         have[c.base_id] = max(have.get(c.base_id, 0), min(int(min(ac, crews) * D.SPLIT_HEADROOM), launch))   # leave some for others
     sizes, left = [], m.required
     for n in sorted(have.values(), reverse=True)[:D.SPLIT_MAX_PARTS]:

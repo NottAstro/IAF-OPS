@@ -85,6 +85,11 @@ def explain_item(st: OpsState, c: Candidate, mission_cands: list[Candidate], sol
         {"label": "Route risk", "value": f"peak {c.risk_peak:.2f}", "note": c.risk_zone or "outside threat zones",
          "tone": "caution" if c.risk_peak >= 0.5 else "ok"},
     ]
+    if c.waves > 1:                           # D45
+        per = max(1, b.runways * D.LAUNCH_CAP_PER_RUNWAY)
+        sizes = [min(per, c.n - k * per) for k in range(c.waves)]
+        rows.append({"label": "Launch", "value": f"{c.waves} waves ({' + '.join(map(str, sizes))}) from {c.launch:%H:%M}Z",
+                     "note": f"{b.code} launches {per} per 15 min; the first wave holds {(c.waves - 1) * D.SLOT_MIN} min to join up", "tone": "info"})
     if c.night:
         rows.append({"label": "Night", "value": "night-qualified crew", "note": "part of the sortie is after civil twilight"})
     if c.support is not None:

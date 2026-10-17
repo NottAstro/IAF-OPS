@@ -140,14 +140,16 @@ def validate(st: OpsState, items: list[ItemSpec], check_wx: bool = True, cover: 
                         out.append(Violation(it.key, it.mission_id, "WX",
                                              f"{b.code} {why} at {when}: {weak[0]} not {need.replace('_', ' ').lower()} rated", "base", b.id))
     # per base: runway launch rate, fuel over the horizon, weapons concurrency, QRA reserve
-    from .optimiser import launch_capacity, slot_of
+    from .optimiser import launch_capacity, slot_of, wave_slots
     slots = defaultdict(int)
     for it in items:
-        slots[(it.base_id, slot_of(it.launch))] += len(it.aircraft)
+        for slot, k in wave_slots(st, it.base_id, len(it.aircraft), it.launch):     # D45: big packages launch in waves
+            slots[(it.base_id, slot)] += k
     for (bid, slot), n in slots.items():
         cap = launch_capacity(st, bid, slot) if bid in st.bases else 0
         if n > cap:
-            k = next(it for it in items if it.base_id == bid and slot_of(it.launch) == slot)
+            k = next((it for it in items if it.base_id == bid and slot in {s for s, _ in wave_slots(st, bid, len(it.aircraft), it.launch)}),
+                     next(it for it in items if it.base_id == bid))
             out.append(Violation(k.key, k.mission_id, "LAUNCH_RATE",
                                  f"{st.bases[bid].code}: {n} launches at {slot:%H:%M}Z, runways take {cap} more", "base", bid))
     fuel = defaultdict(float)
