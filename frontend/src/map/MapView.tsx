@@ -1,17 +1,19 @@
 // The one MapLibre map (FR-MAP-01..13). Flat Web Mercator framed on India; features talk to it via the store
-// and the exported camera helpers below, never by importing maplibre-gl themselves (AGENTS.md §5).
+// rather than importing maplibre-gl themselves (AGENTS.md §5).
 import { useQuery } from "@tanstack/react-query";
 import maplibregl, { type GeoJSONSource, type Map as MlMap, type MapGeoJSONFeature } from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import type { Feature, Geometry, Point } from "geojson";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
+import { scheduledDestination, useLivePath } from "../api/live";
 import type { Base, BaseStatus, LiveTrack, Site } from "../api/types";
 import { LIVE_GROUP, type LayerId, type Selection, layerMode, useStore } from "../store";
 import { FLIGHT_CAT_TOKEN, cssVar } from "./colors";
 import { FOCUS_LAYERS, INDIA_BOUNDS, INTERACTIVE, LAYER_IDS, OVERLAY_BEFORE, REGION_BOUNDS, buildStyle } from "./style";
 import { type BlockOpts, baseBlock, glyphIcon, iconImage } from "./symbols";
 import { useWind } from "./wind";
+import { greatCircle } from "./flightPath";
 
 interface Metar { icao: string; lat: number; lon: number; flight_category: string }
 interface Near { name: string; code?: string; icao?: string; iata?: string; lat: number; lon: number; distance_km: number | string }
@@ -67,6 +69,7 @@ function toSelection(f: MapGeoJSONFeature): Selection {
   if (f.layer.id === "ops-sim" || f.layer.id === "ops-unk") return { kind: "simtrack", id: String(p.track_id) };
   if (f.layer.id === "ops-missions") return { kind: "mission", id: Number(p.id) };
   if (f.layer.id === "ops-routes") return { kind: "route", id: Number(p.id) };
+  if (f.layer.id === "ops-ad-sites") return { kind: "ad", id: Number(p.id) };
   const [lon, lat] = (f.geometry as Point).coordinates;
   const id = f.layer.id;
   if (id === "live-air") return { kind: "live", hex: String(p.hex) };
@@ -82,6 +85,7 @@ function hoverText(f: MapGeoJSONFeature): [string, string] {
   if (id === "ops-sim" || id === "ops-unk") return [`${p.label} (simulated)`, String(p.desc ?? "")];
   if (id === "ops-missions") return [String(p.code), `${p.priority} · ${p.name} · ${p.state}`];
   if (id === "ops-routes") return [`${p.code} (${p.priority})`, `${p.n_aircraft} × ${p.type} from ${p.base}${p.proposed ? " · proposed" : ""}`];
+  if (id === "ops-ad-sites") return [`${p.code} (simulated)`, String(p.system ?? "")];
   if (id === "live-air") return [String(p.label || p.hex), String(p.desc ?? "")];
   if (id.startsWith("bases-"))
     return [String(p.name), [p.code, p.svc != null && p.svc !== "" ? `${p.svc}% serviceable` : "", p.qra ? `QRA ${p.qra}` : "",
@@ -177,6 +181,13 @@ export function MapView({ hidden }: { hidden: boolean }) {
     queryFn: () => api<{ tracks: LiveTrack[]; status: Record<string, never> }>(`/live/aircraft?bbox=${box}`),
     refetchInterval: 10000, enabled: s.mode === "LIVE" && !!box && !hidden, placeholderData: (p) => p,
   });
+  const selectedTrack = s.selection?.kind === "live" && s.mode === "LIVE" && !hidden
+    ? s.liveTracks.find((t) => s.selection?.kind === "live" && t.hex === s.selection.hex && !t.on_ground && s.liveCats[LIVE_GROUP[t.category]]) : undefined;
+  const path = useLivePath(selectedTrack?.hex ?? null, selectedTrack?.callsign ?? null, !!selectedTrack);
+  useEffect(() => {
+    // Initial selection fetches automatically; subsequent live polls refresh the same trail query.
+    if (selectedTrack) void path.trail.refetch();
+  }, [live.dataUpdatedAt]); // eslint-disable-line react-hooks/exhaustive-deps
   const metars = useQuery({
     queryKey: ["wx", "metars"], queryFn: () => api<{ stations: Metar[] }>("/wx/metars"), refetchInterval: 300000,
     enabled: s.mode === "WX" && s.wx.metar,
@@ -201,7 +212,7 @@ export function MapView({ hidden }: { hidden: boolean }) {
   const routes = useQuery({ queryKey: ["ops-routes", cid], queryFn: () => api<Fc>(`/ops/plans/${cid}/routes`), enabled: ops && !!cid });
   const proposed = useQuery({ queryKey: ["ops-routes", "proposal", pidr], queryFn: () => api<Fc>(`/ops/plans/${pidr}/routes`), enabled: ops && !!pidr });
   const radars = useQuery({ queryKey: ["sites", "radars"], queryFn: () => api<Site[]>("/sites/radars"), enabled: ops && s.layers["ops-radar"], staleTime: 60000 });
-  const ads = useQuery({ queryKey: ["sites", "ad"], queryFn: () => api<Site[]>("/sites/ad"), enabled: ops && s.layers["ops-ad"], staleTime: 60000 });
+  const ads = useQuery({ queryKey: ["sites", "ad"], queryFn: () => api<Site[]>("/sites/ad"), enabled: ops && (s.layers["ops-ad"] || s.layers["ops-ad-sites"]), staleTime: 60000 });
   const wxImpact = useQuery({ queryKey: ["ops-wx"], queryFn: () => api<WxImpact[]>("/ops/wx-impact"), enabled: ops, refetchInterval: 60000 });
 
   useEffect(() => {
@@ -217,6 +228,9 @@ export function MapView({ hidden }: { hidden: boolean }) {
       { layer, ok: x.status === "OPERATIONAL", code: x.code });
     setData(map, "ops-rings", [...(radars.data ?? []).map((x) => ring(x, "radar")), ...(ads.data ?? []).map((x) => ring(x, "ad"))]);
   }, [map, radars.data, ads.data]);
+  useEffect(() => {
+    if (map) setData(map, "ops-ad-sites", (ads.data ?? []).map((x) => point(x.lon, x.lat, { id: x.id, code: x.code, system: x.system ?? "" })));
+  }, [map, ads.data]);
   useEffect(() => {
     if (!map) return;
     const changed = new Set((proposed.data?.features ?? []).filter((f) => f.properties?.change && f.properties.change !== "KEPT")
@@ -307,6 +321,8 @@ export function MapView({ hidden }: { hidden: boolean }) {
   // ---------------------------------------------------------------- live ADS-B, dead-reckoned between polls for smooth motion
   useEffect(() => {
     if (!map) return;
+    setData(map, "live-path", []);
+    setData(map, "live-selection", []);
     if (s.mode !== "LIVE") return void setData(map, "live", []);
     if (hidden) return; // the 1 s dead-reckoning redraw re-renders the whole (3D) map: pause it off-screen
     const fetched = live.dataUpdatedAt || Date.now();
@@ -315,7 +331,7 @@ export function MapView({ hidden }: { hidden: boolean }) {
     const tracks = (live.data?.tracks ?? []).filter((t) => !t.on_ground && LIVE_GROUP[t.category] && s.liveCats[LIVE_GROUP[t.category]]);
     const draw = () => {
       const dt = (Date.now() - fetched) / 1000;
-      setData(map, "live", tracks.map((t) => {
+      const icons = tracks.map((t) => {
         const group = LIVE_GROUP[t.category];
         const secs = Math.min(t.age_s + dt, 60);
         const d = t.gs_kt && t.track_deg != null ? t.gs_kt * 0.514444 * secs : 0;
@@ -326,12 +342,24 @@ export function MapView({ hidden }: { hidden: boolean }) {
           icon: glyphIcon(cls, t.emergency ? crit : colors[group], group === "civil" ? 22 : 24),
           rot: t.track_deg ?? 0, op: t.age_s + dt > 60 ? 0.45 : 1,
         });
-      }));
+      });
+      setData(map, "live", icons);
+      const selected = selectedTrack && icons.find((f) => f.properties?.hex === selectedTrack.hex);
+      setData(map, "live-selection", selected ? [selected] : []);
+      const lines: Feature[] = [];
+      if (selected) {
+        const position = (selected.geometry as Point).coordinates;
+        const recorded = path.trail.data ?? [];
+        if (recorded.length) lines.push(feature({ type: "LineString", coordinates: [...recorded.map((p) => [p.lon, p.lat]), position] }, { kind: "trail" }));
+        const destination = scheduledDestination(path.enrich.data?.route);
+        if (destination) lines.push(feature({ type: "LineString", coordinates: greatCircle(position, destination) }, { kind: "schedule" }));
+      }
+      setData(map, "live-path", lines);
     };
     draw();
     const timer = setInterval(draw, 1000);
     return () => clearInterval(timer);
-  }, [map, live.data, live.dataUpdatedAt, s.liveCats, s.mode, hidden]);
+  }, [map, live.data, live.dataUpdatedAt, s.liveCats, s.mode, hidden, selectedTrack, path.trail.data, path.enrich.data]);
 
   // ---------------------------------------------------------------- weather: airfield METAR + clouds + rain
   useEffect(() => {
@@ -384,6 +412,7 @@ export function MapView({ hidden }: { hidden: boolean }) {
   // ---------------------------------------------------------------- 3D terrain everywhere except Weather, which is laid flat
   const wasFlat = useRef(true);  // true at start, so the map tilts into 3D once it has loaded
   const opened = useRef(false);
+  const appliedTilt = useRef<boolean | null>(null);
   useEffect(() => {
     if (!map) return;
     const flat = s.mode === "WX";
@@ -396,14 +425,16 @@ export function MapView({ hidden }: { hidden: boolean }) {
     } else {
       map.dragRotate.enable();
       map.touchPitch.enable();
-      if (wasFlat.current && map.getPitch() < 10) {
+      if (wasFlat.current || appliedTilt.current !== s.tilt) {
         // on opening, tilting shrinks the far side, so zoom in a little to keep India filling the frame
-        map.easeTo(opened.current ? { pitch: TILT, duration: 900 } : { pitch: TILT, zoom: map.getZoom() + 0.35, offset: [0, -40], duration: 1200 });
+        const pitch = s.tilt ? TILT : 0;
+        map.easeTo(opened.current ? { pitch, duration: 900 } : { pitch, zoom: map.getZoom() + 0.35, offset: [0, -40], duration: 1200 });
         opened.current = true;
       }
     }
     wasFlat.current = flat;
-  }, [map, s.mode, s.exaggeration]);
+    appliedTilt.current = s.tilt;
+  }, [map, s.mode, s.exaggeration, s.tilt]);
 
   // ---------------------------------------------------------------- infrastructure view: spotlight a base and its nearest connections
   useEffect(() => {
@@ -447,9 +478,3 @@ export function MapView({ hidden }: { hidden: boolean }) {
 }
 
 const feetOf = (m: number) => `${Math.round(m * 3.28084).toLocaleString("en-IN")} ft`;
-
-/** Tilt toggle for the 3D terrain: oblique ↔ straight down (no effect in the flat Weather view). */
-export function toggleTilt() {
-  if (!current || !current.getTerrain()) return;
-  current.easeTo({ pitch: current.getPitch() > 20 ? 0 : TILT, duration: 900 });
-}

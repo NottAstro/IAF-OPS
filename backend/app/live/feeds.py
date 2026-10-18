@@ -9,6 +9,7 @@ import asyncio
 import logging
 import math
 import time
+from collections import deque
 
 import httpx
 
@@ -29,6 +30,8 @@ PROVIDERS = {
                        "mil": "https://api.airplanes.live/v2/mil", "gap": 1.1},
 }
 TRACKS: dict[str, dict] = {}
+TRAIL_LIMIT = 120
+TRAILS: dict[str, deque[dict]] = {}
 MILITARY: set[str] = set()                     # sticky per session (God's Eye createMilitaryRegistry)
 STATUS: dict[str, dict] = {p: {"state": "OFF", "last_ok": None, "error": None, "count": 0}
                            for p in [*PROVIDERS, "opensky"] if p in config.ADSB_PROVIDERS}
@@ -102,6 +105,17 @@ def merge(tracks: list[dict]) -> None:
             for k in ("icao_type", "reg", "desc", "operator"):
                 t[k] = t.get(k) or old.get(k)
         TRACKS[t["hex"]] = t
+        trail = TRAILS.setdefault(t["hex"], deque(maxlen=TRAIL_LIMIT))
+        # Repeated provider snapshots aren't new observations; keep the trail chronological.
+        if not trail or t["ts"] > trail[-1]["ts"]:
+            trail.append({k: t[k] for k in ("lat", "lon", "alt_m", "ts")})
+
+
+def prune(now: float) -> None:
+    """Expire a track and its entire recorded trail together (FR-LIVE-06/09)."""
+    for h in [h for h, t in TRACKS.items() if t["ts"] < now - 120]:
+        TRACKS.pop(h, None)
+        TRAILS.pop(h, None)
 
 
 def _ok(name: str, n: int) -> None:
@@ -186,9 +200,7 @@ async def poll_opensky() -> None:
 
 async def janitor() -> None:
     while True:
-        cutoff = time.time() - 120          # drop tracks unseen for 120 s (FR-LIVE-06)
-        for h in [h for h, t in TRACKS.items() if t["ts"] < cutoff]:
-            TRACKS.pop(h, None)
+        prune(time.time())
         for name, st in STATUS.items():
             if st["last_ok"] and time.time() - st["last_ok"] > 120 and st["state"] == "LIVE":
                 st["state"] = "STALE"

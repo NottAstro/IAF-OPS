@@ -49,6 +49,9 @@
   --map-highway: #8fe3ff;
   --map-rail-main: #e7c36b;
   --map-station: #e7c36b;
+  --map-tower: #a5e5f5;
+  --map-trail: var(--accent-strong);
+  --map-schedule: var(--qra);
   /* air base badges (owner) */
   --base-iaf: #1fc8ff;
   --base-other: #9db2d3;

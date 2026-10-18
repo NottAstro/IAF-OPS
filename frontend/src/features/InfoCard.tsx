@@ -1,9 +1,10 @@
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../api/client";
-import type { Fix, LiveTrack, MissionRow, PlanItemView, Reason } from "../api/types";
+import { scheduledDestination, useLivePath } from "../api/live";
+import type { Base, Fix, LiveTrack, MissionRow, PlanItemView, Reason, Site } from "../api/types";
 import { ErrorText, Loading, Pill, Row, Sim, ToneText } from "../components/ui";
 import { RANK, feet, istTime, label, num } from "../lib/format";
-import { type Selection, useStore } from "../store";
+import { LIVE_GROUP, type Selection, useStore } from "../store";
 
 function Card({ title, children, sim }: { title: React.ReactNode; children: React.ReactNode; sim?: boolean }) {
   const set = useStore((s) => s.set);
@@ -19,6 +20,7 @@ export function InfoCard({ sel, liveTracks }: { sel: NonNullable<Selection>; liv
   if (sel.kind === "mission") return <MissionCard id={sel.id} />;
   if (sel.kind === "route") return <RouteCard id={sel.id} />;
   if (sel.kind === "simtrack") return <SimTrackCard id={sel.id} />;
+  if (sel.kind === "ad") return <AdCard id={sel.id} />;
   if (sel.kind === "public-base") return <PublicBase id={sel.id} />;
   if (sel.kind === "live") return <LiveCard track={liveTracks.find((t) => t.hex === sel.hex)} hex={sel.hex} />;
   if (sel.kind === "wx") return <WxCard lat={sel.lat} lon={sel.lon} />;
@@ -38,6 +40,27 @@ export function InfoCard({ sel, liveTracks }: { sel: NonNullable<Selection>; liv
 }
 
 // ---------------------------------------------------------------- Phase 2: operations view cards (all simulated)
+function AdCard({ id }: { id: number }) {
+  const s = useStore();
+  const q = useQuery({ queryKey: ["sites", "ad"], queryFn: () => api<Site[]>("/sites/ad"), staleTime: 60000 });
+  const bases = useQuery({ queryKey: ["bases"], queryFn: () => api<Base[]>("/bases"), staleTime: Infinity });
+  if (s.mode !== "OPS") return null;
+  if (!q.data) return <Card title="Air defence site" sim>{q.error ? <ErrorText error={q.error} /> : <Loading />}</Card>;
+  const d = q.data.find((x) => x.id === id);
+  if (!d) return <Card title="Air defence site" sim><div className="empty">Site no longer available.</div></Card>;
+  const base = bases.data?.find((b) => b.code === d.base);
+  return <Card title={<span className="mono">{d.code ?? "—"}</span>} sim>
+    <Row label="Code" value={d.code ?? "—"} />
+    <Row label="System" value={d.system ?? "—"} />
+    <Row label="Category" value={d.category ? label(d.category) : "—"} />
+    <Row label="Status" value={d.status ? label(d.status) : "—"} />
+    <Row label="Launchers ready / total" value={`${d.launchers_ready ?? "—"} / ${d.launchers_total ?? "—"}`} />
+    <Row label="Range" value={d.max_range_km != null ? `${num(d.max_range_km)} km` : "—"} />
+    <Row label="Protected base" value={base ? <button className="btn btn-ghost btn-sm" onClick={() => s.set({ selection: { kind: base.side === "OWN" ? "base" : "public-base", id: base.id }, panelTab: "Ov" })}>{base.code}</button> : d.base ?? "—"} />
+    <Row label="Latitude / longitude" value={`${d.lat != null ? d.lat.toFixed(4) : "—"}, ${d.lon != null ? d.lon.toFixed(4) : "—"}`} />
+  </Card>;
+}
+
 function MissionCard({ id }: { id: number }) {
   const q = useQuery({ queryKey: ["missions", "one", id], queryFn: () => api<MissionRow & { unmet: { reasons: Reason[]; fixes: Fix[] } | null }>(`/ops/missions/${id}`) });
   if (!q.data) return <Card title="Mission" sim>{q.error ? <ErrorText error={q.error} /> : <Loading />}</Card>;
@@ -120,13 +143,15 @@ function PublicBase({ id }: { id: number }) {
 }
 
 function LiveCard({ track, hex }: { track?: LiveTrack; hex: string }) {
-  const e = useQuery({
-    queryKey: ["enrich", hex, track?.callsign], queryFn: () => api<{ aircraft?: Record<string, string>; route?: Record<string, { iata_code?: string; name?: string }> }>(`/live/aircraft/${hex}/enrich?callsign=${track?.callsign ?? ""}`),
-    staleTime: 86400000,
-  });
+  const mode = useStore((s) => s.mode);
+  const cats = useStore((s) => s.liveCats);
+  const visible = !!track && mode === "LIVE" && !track.on_ground && cats[LIVE_GROUP[track.category]];
+  const { trail, enrich: e } = useLivePath(hex, track?.callsign ?? null, visible);
   if (!track) return <Card title={hex}><div className="empty">Track no longer in view.</div></Card>;
   const a = e.data?.aircraft;
   const r = e.data?.route;
+  const recorded = visible ? trail.data?.length ?? 0 : 0;
+  const destination = visible ? scheduledDestination(r) : null;
   return (
     <Card title={<span className="mono">{track.callsign ?? hex.toUpperCase()}</span>}>
       {track.emergency && <div className="pill s-critical" style={{ margin: "4px 0" }}>■ {track.emergency}</div>}
@@ -135,11 +160,17 @@ function LiveCard({ track, hex }: { track?: LiveTrack; hex: string }) {
       <Row label="Registration" value={a?.registration ?? track.reg ?? "—"} />
       <Row label="Operator" value={a?.registered_owner ?? track.operator ?? "—"} />
       {r && <Row label="Route" value={`${r.origin?.iata_code ?? "?"} → ${r.destination?.iata_code ?? "?"}`} />}
+      <Row label="Flight path" value={recorded || destination ? <>
+        {!!recorded && <span>Recorded trail · {recorded} points</span>}
+        {!!recorded && destination && <br />}
+        {destination && <span>Scheduled route shown</span>}
+      </> : <strong>Flight path unavailable</strong>} />
       <Row label="Altitude" value={track.alt_m != null ? feet(track.alt_m) : "—"} />
       <Row label="Ground speed / track" value={`${num(track.gs_kt)} kt / ${num(track.track_deg)}°`} />
       <Row label="Squawk" value={<span className="mono">{track.squawk ?? "—"}</span>} />
       <Row label="Source / age" value={`${track.source} · ${track.age_s} s`} />
       <div className="dim" style={{ fontSize: 12, marginTop: 6 }}>Live public ADS-B (not simulated). Enrichment: adsbdb.</div>
+      <div className="dim" style={{ fontSize: 12, marginTop: 6 }}>The recorded trail only covers the time since the server started seeing this aircraft. Scheduled route (adsbdb, may differ from actual).</div>
     </Card>
   );
 }

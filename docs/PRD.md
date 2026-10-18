@@ -252,7 +252,7 @@ Priority: **M** = must, **S** = should, **C** = could. Entities are defined in [
 | FR-LIVE-06 | M | Staleness: tracks fade at 60 s and are removed at 120 s. Feed chip shows LIVE / STALE / OFF per provider. |
 | FR-LIVE-07 | M | Simulated IAF tracks arrive over WebSocket. They use the APP-6 exercise-friend symbol and a SIM tag. Clicking one opens its sortie, aircraft and crew. |
 | FR-LIVE-08 | M | Simulated unknown tracks use the APP-6 exercise-unknown symbol and a SIM tag. They approach no closer than the configured border buffer and never cross into Indian territory. |
-| FR-LIVE-09 | S | Track trails (last N positions), toggleable. |
+| FR-LIVE-09 | S | Implemented for selected live aircraft: last 120 observed positions per hex, retained in memory since the server first saw the aircraft and expired with the track. A solid trail joins the last recorded position to the dead-reckoned icon. Selection highlights the icon; clearing selection, changing view, leaving the map or losing the track removes the path. Where adsbdb supplies both airport coordinates, a distinct dashed great-circle leg to the scheduled destination is labelled as schedule data that may differ from actual. No upstream history or filed flight plan is implied. |
 | FR-LIVE-10 | M | API keys and credentials live on the server only. Provider order and poll intervals are configurable. |
 | FR-LIVE-11 | C | Record ADS-B snapshots to disk and replay them, for unreliable networks. |
 
@@ -308,7 +308,7 @@ The full field list, mapped to your element list, is in §8.
 
 | ID | P | Requirement |
 |---|---|---|
-| FR-INV-01 | M | One table per entity: aircraft, aircrew, ground crew strength, ground assets, fuel storage, fuel transactions, warehouses and stock, AD batteries, radars, comms nodes, runways, parking, squadrons, sorties, missions. Server-side paging, sort, filter (base, command, type, status) and search. |
+| FR-INV-01 | M | One table per entity: aircraft, aircrew, ground crew strength, ground assets, fuel storage, fuel transactions, warehouses and stock, AD batteries, radars, comms nodes, runways, parking, squadrons, sorties, missions. Server-side paging, sort, filter (base, command, type, status) and search. Navigation groups these tables into Fleet, Personnel, Operations, Logistics & support, Defence & communications, and Bases & infrastructure; only the active category's sections are shown. Existing entity URLs and permissions remain unchanged. |
 | FR-INV-02 | M | Create and edit forms with server validation messages. Site entities get a map point-picker. |
 | FR-INV-03 | M | Delete asks for confirmation. If other records reference the item, delete is blocked and **Retire** is offered instead. |
 | FR-INV-04 | M | Role scoping per §4.2, enforced server-side. |
