@@ -102,6 +102,7 @@ interface State {
   cursor: { lat: number; lon: number; elev?: number | null } | null;
   exaggeration: number;
   tilt: boolean;
+  connectivityFocus: { sourceId: number; destinationId: number | null; mode: "direct" | "road"; fitSeq: number } | null;
   flyTo: { lat: number; lon: number; zoom: number; seq: number } | null;
   set: (p: Partial<State>) => void;
   toggleLayer: (id: LayerId) => void;
@@ -143,6 +144,7 @@ export const useStore = create<State>((set, get) => ({
   overlayOpacity: 0.85,
   windModel: "gfs",
   selection: null,
+  connectivityFocus: null,
   panelTab: "Ov",
   liveTracks: [],
   feeds: {},
@@ -156,6 +158,10 @@ export const useStore = create<State>((set, get) => ({
   ...saved("airops.view.v1", { tilt: true, exaggeration: 1.5 }),
   flyTo: null,
   set: (p) => {
+    const next = { ...get(), ...p };
+    if (next.connectivityFocus && (next.mode !== "INFRA" || next.selection?.kind !== "base" || next.selection.id !== next.connectivityFocus.sourceId)) {
+      p = { ...p, connectivityFocus: null };
+    }
     if (p.tilt !== undefined || p.exaggeration !== undefined) {
       persist("airops.view.v1", { tilt: p.tilt ?? get().tilt, exaggeration: p.exaggeration ?? get().exaggeration });
     }

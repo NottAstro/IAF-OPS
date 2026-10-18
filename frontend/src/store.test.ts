@@ -36,3 +36,31 @@ describe("map view preferences", () => {
     }
   });
 });
+
+describe("temporary connectivity focus", () => {
+  it("keeps the source selected and never overwrites saved map settings", async () => {
+    const { useStore } = await import("./store");
+    useStore.getState().toggleLayer("satellite");
+    useStore.getState().set({ tilt: false, exaggeration: 2 });
+    const saved = new Map(values);
+    const layers = useStore.getState().layers;
+    useStore.getState().set({ mode: "INFRA", selection: { kind: "base", id: 1 },
+      connectivityFocus: { sourceId: 1, destinationId: null, mode: "direct", fitSeq: 1 } });
+    useStore.getState().set({ connectivityFocus: { ...useStore.getState().connectivityFocus!, destinationId: 2, mode: "road" } });
+    expect(useStore.getState().selection).toEqual({ kind: "base", id: 1 });
+    useStore.getState().set({ connectivityFocus: null });
+    expect(useStore.getState()).toMatchObject({ layers, tilt: false, exaggeration: 2 });
+    expect(values).toEqual(saved);
+    vi.resetModules();
+    expect((await import("./store")).useStore.getState().connectivityFocus).toBeNull();
+  });
+  it("exits when the source is cleared, another base is selected, or the map view changes", async () => {
+    const { useStore } = await import("./store");
+    for (const change of [{ selection: null }, { selection: { kind: "base" as const, id: 3 } }, { mode: "LIVE" as const }]) {
+      useStore.getState().set({ mode: "INFRA", selection: { kind: "base", id: 1 },
+        connectivityFocus: { sourceId: 1, destinationId: 2, mode: "road", fitSeq: 1 } });
+      useStore.getState().set(change);
+      expect(useStore.getState().connectivityFocus).toBeNull();
+    }
+  });
+});

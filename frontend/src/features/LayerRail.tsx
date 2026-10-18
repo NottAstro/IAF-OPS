@@ -114,6 +114,8 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
   const s = useStore();
   const [pane, setPane] = useState<"view" | "settings" | null>("view");
   const [settingsWindow, setSettingsWindow] = useState<string | null>(null);
+  const focus = s.mode === "INFRA" && s.connectivityFocus != null;
+  const sourceId = s.selection?.kind === "base" ? s.selection.id : null;
   const owm = useQuery({ queryKey: ["wx-status"], queryFn: () => api<{ owm: boolean }>("/wx/status"), enabled: s.mode === "WX" });
   const counts: Record<string, number> = {};
   for (const t of liveTracks) if (!t.on_ground && LIVE_GROUP[t.category]) counts[LIVE_GROUP[t.category]] = (counts[LIVE_GROUP[t.category]] ?? 0) + 1;
@@ -152,6 +154,10 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
         <aside className="flyout" aria-label={`${view.label} options`}>
           {head(view.label)}
           <p className="view-hint">{VIEW[s.mode].hint}</p>
+          {s.mode === "INFRA" && <Toggle swatch={<span className="swatch-line" style={{ borderColor: "var(--accent)" }} />}
+            label="Connectivity focus" on={focus} disabled={sourceId == null}
+            onChange={() => s.set({ connectivityFocus: focus || sourceId == null ? null : { sourceId, destinationId: null, mode: "direct", fitSeq: 1 } })}
+            note={sourceId == null ? "Select an IAF base to focus on nearby connections." : focus ? "Only nearby base connections are shown. Exit focus to restore your layers." : "Hide other layers and compare direct connections and shortest road routes."} />}
 
           {s.mode === "LIVE" && <>
             {LIVE_CATS.map((c) => (
@@ -181,7 +187,7 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
           </>}
 
           {s.mode === "OPS" && <OpsStatus />}
-          {viewLayers.map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)}
+          {viewLayers.map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)} disabled={focus}
             count={k === "ops-sim" ? s.simTracks.filter((t) => t.kind === "SIM_IAF").length : k === "ops-unknown" ? s.simTracks.filter((t) => t.kind === "SIM_UNKNOWN").length : undefined} />)}
           {s.mode === "OPS" && <div className="toggle-note" style={{ margin: "6px 0 0" }}><span className="sim-badge">SIM</span> Every object in this view is simulated. Threat zones are generic risk bands and exercise injects, not real deployments.</div>}
 
@@ -192,18 +198,19 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
         <aside className="flyout" aria-label="Map settings">
           {head("Map settings")}
           <p className="view-hint">Layers shown in every view.</p>
+          {focus && <p className="view-hint">Connectivity focus hides other layers. Satellite imagery remains available.</p>}
           {LAYER_GROUPS.filter((g) => groupIds(g).every((k) => !layerMode(k))).map((g) => (
             <SettingsWindow key={g} title={g} meta={onCount(groupIds(g), s.layers)} open={settingsWindow === g}
               onOpen={() => setSettingsWindow(g)} onClose={() => setSettingsWindow((current) => current === g ? null : current)}>
-              {(g === "View" ? ["relief"] as const : groupIds(g)).map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)} />)}
+              {(g === "View" ? ["relief"] as const : groupIds(g)).map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)} disabled={focus} />)}
               {g === "View" && <>
                 {s.layers.relief && <Ramp stops={["var(--relief-0)", "var(--relief-2)", "var(--relief-3)", "var(--relief-4)", "var(--relief-5)"]}
                   labels={["0 m", "1,000", "2,500", "4,500", "6,500"]} />}
                 <label className="tool-row">Relief height
-                  <input type="range" min={1} max={3} step={0.5} value={s.exaggeration} onChange={(e) => s.set({ exaggeration: Number(e.target.value) })} />
+                  <input type="range" min={1} max={3} step={0.5} value={s.exaggeration} disabled={focus} onChange={(e) => s.set({ exaggeration: Number(e.target.value) })} />
                   <span className="mono" style={{ color: "var(--text-1)" }}>{s.exaggeration}×</span></label>
                 <Toggle swatch={SWATCH.satellite} label={LAYERS.satellite.label} on={s.layers.satellite} onChange={() => s.toggleLayer("satellite")} />
-                <Toggle swatch={<span className="toggle-count">3D</span>} label="3D tilt" on={s.tilt} onChange={() => s.set({ tilt: !s.tilt })} disabled={s.mode === "WX"} />
+                <Toggle swatch={<span className="toggle-count">3D</span>} label="3D tilt" on={s.tilt} onChange={() => s.set({ tilt: !s.tilt })} disabled={s.mode === "WX" || focus} />
                 <div className="toggle-note" style={{ margin: "2px 0 0" }}>
                   {s.mode === "WX" ? "The Weather view is always flat; your tilt preference returns in Live, Infra and Ops." : "Right-drag to rotate and tilt. 3D tilt and relief height are saved for every view."}
                 </div>

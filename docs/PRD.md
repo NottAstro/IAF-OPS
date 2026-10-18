@@ -239,6 +239,7 @@ Priority: **M** = must, **S** = should, **C** = could. Entities are defined in [
 | FR-MAP-14 | M | Neighbour air bases use APP-6 **hostile** frames for Pakistan and China and **neutral** frames for other countries. Their cards show public information only, with the note "Public information only — no inventory held". |
 | FR-MAP-15 | M | Navy, Army Aviation and Coast Guard air stations appear as "Other Indian military" markers with a public-info card and no inventory. |
 | FR-MAP-16 | M | A credits panel lists every data source, licence and attribution string ([API §10](API.md#10-attribution-strings)). |
+| FR-MAP-17 | S | Infra has a temporary Connectivity focus toggle for a selected IAF base. It hides unrelated layers and inventory, lays the map flat, and shows the source and four nearby public IAF bases, ordered by direct distance. Selecting a destination keeps the source selected; Direct shows geographic arcs, while Shortest road route requests a distance-based public-road estimate on demand. Fit connections frames the endpoints. Both normal and satellite backgrounds support focus; the existing saved Satellite imagery preference remains editable without clearing connections. Exit, changing view, clearing/changing the source, or leaving the map restores ordinary layers and the saved tilt without rewriting preferences. Road-network endpoints are distinguished from unverified base-access connectors; failures never invent a road route. |
 
 ### FR-LIVE: live air picture
 

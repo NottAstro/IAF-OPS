@@ -1,0 +1,12 @@
+.connectivity-card { top: var(--s3); max-width: calc(100vw - 24px); max-height: calc(100vh - 140px); overflow-y: auto; }
+.connectivity-card p, .connectivity-credit { font-size: var(--t-small); line-height: 1.5; }
+.connectivity-source { color: var(--text-1); }
+.connectivity-source b { color: var(--accent-strong); margin-right: var(--s1); }
+.connectivity-actions { display: flex; flex-wrap: wrap; gap: var(--s2); margin: var(--s3) 0; }
+.connectivity-destinations { display: flex; flex-direction: column; gap: var(--s1); }
+.connectivity-destination { display: flex; justify-content: space-between; gap: var(--s2); width: 100%; padding: var(--s2); text-align: left; font: inherit; font-size: var(--t-small); color: var(--text-2); background: var(--surface-1); border: 1px solid var(--rule); border-radius: 4px; cursor: pointer; }
+.connectivity-destination .mono { white-space: nowrap; }
+.connectivity-destination:hover { background: var(--surface-2); color: var(--text-1); }
+.connectivity-destination.on { border-color: var(--accent); color: var(--accent-strong); background: var(--accent-tint); }
+.connectivity-destination:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.connectivity-credit { margin-top: var(--s3); color: var(--text-3); }

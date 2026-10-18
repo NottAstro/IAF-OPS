@@ -2,7 +2,7 @@
 // OpenFreeMap (OpenMapTiles schema) supplies terrain features only: land cover, water, roads, rail, runways.
 // Its `boundary`, `place`, `poi` and other label layers are deliberately NOT used (AGENTS.md §9): every boundary
 // and name comes from our own GoI-compliant vector tiles (/api/v1/gis/tiles).
-import type { ExpressionSpecification, LayerSpecification, SourceSpecification, StyleSpecification } from "maplibre-gl";
+import type { ExpressionSpecification, GeoJSONSourceSpecification, LayerSpecification, StyleSpecification } from "maplibre-gl";
 import type { LayerId } from "../store";
 import { cssVar } from "./colors";
 import { adIcon, airportBlock, placeIcon, stationIcon, towerIcon } from "./symbols";
@@ -52,7 +52,8 @@ export const LAYER_IDS: Record<LayerId, string[]> = {
 };
 
 /** Clickable layers, top-most first. */
-export const INTERACTIVE = ["ops-unk", "ops-sim", "ops-missions", "ops-routes", "ops-ad-sites", "live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
+export const INTERACTIVE = ["connectivity-bases", "ops-unk", "ops-sim", "ops-missions", "ops-routes", "ops-ad-sites", "live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
+export const CONNECTIVITY_LAYERS = ["connectivity-direct", "connectivity-direct-label", "connectivity-road-glow", "connectivity-road", "connectivity-access", "connectivity-halo", "connectivity-bases"];
 /** Weather rasters go under the boundaries, so borders and names stay readable through the clouds. */
 export const OVERLAY_BEFORE = "adm2";
 /** Base-connection spotlight layers (Infrastructure view). */
@@ -62,7 +63,7 @@ export function buildStyle(): StyleSpecification {
   const origin = location.origin;
   const bg = cssVar("--bg");
   const halo = cssVar("--bg", 0.85);
-  const emptyFc = (): SourceSpecification => ({ type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  const emptyFc = (): GeoJSONSourceSpecification => ({ type: "geojson", data: { type: "FeatureCollection", features: [] } });
   const linkColor = x(["match", ["get", "kind"], "rail", cssVar("--map-rail-main"), "air", cssVar("--map-label"), cssVar("--accent")]);
   const station = cssVar("--map-station");
   // compact block (glyph cell) far out, full tag with the code from `fullAt`; the name appears under it close in
@@ -279,6 +280,24 @@ export function buildStyle(): StyleSpecification {
       layout: { "symbol-placement": "line-center", "text-field": "Scheduled route (adsbdb, may differ from actual)",
         "text-font": REG, "text-size": 10, "text-keep-upright": true },
       paint: { "text-color": cssVar("--map-schedule"), "text-halo-color": halo, "text-halo-width": 1.5 } },
+    // Infra focus: only public identities and measured/estimated connections, with no inventory gauges.
+    { id: "connectivity-direct", type: "line", source: "connectivity", filter: ["==", ["get", "role"], "direct"], layout: { visibility: "none" },
+      paint: { "line-color": cssVar("--accent-strong"), "line-width": ["case", ["get", "active"], 2.5, 1.4], "line-opacity": ["get", "opacity"], "line-dasharray": [2, 2] } },
+    { id: "connectivity-direct-label", type: "symbol", source: "connectivity", filter: ["==", ["get", "role"], "direct"],
+      layout: { visibility: "none", "symbol-placement": "line-center", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 11 },
+      paint: { "text-color": cssVar("--accent-strong"), "text-halo-color": halo, "text-halo-width": 2, "text-opacity": ["get", "opacity"] } },
+    { id: "connectivity-road-glow", type: "line", source: "connectivity", filter: ["==", ["get", "role"], "road"], layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": cssVar("--map-schedule"), "line-width": 9, "line-blur": 4, "line-opacity": 0.3 } },
+    { id: "connectivity-road", type: "line", source: "connectivity", filter: ["==", ["get", "role"], "road"], layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": cssVar("--map-schedule"), "line-width": 3.5 } },
+    { id: "connectivity-access", type: "line", source: "connectivity", filter: ["==", ["get", "role"], "access"], layout: { visibility: "none" },
+      paint: { "line-color": cssVar("--neutral"), "line-width": 1.6, "line-dasharray": [1, 2] } },
+    { id: "connectivity-halo", type: "circle", source: "connectivity", filter: ["all", ["==", ["get", "role"], "base"], ["get", "active"]], layout: { visibility: "none" },
+      paint: { "circle-radius": 22, "circle-color": cssVar("--accent", 0.12), "circle-stroke-color": cssVar("--accent-strong"), "circle-stroke-width": 2 } },
+    { id: "connectivity-bases", type: "symbol", source: "connectivity", filter: ["==", ["get", "role"], "base"],
+      layout: { visibility: "none", "icon-image": ["get", "icon"], "icon-allow-overlap": true, "icon-ignore-placement": true,
+        "text-field": ["get", "name"], "text-font": BOLD, "text-size": 11, "text-offset": [0, 2], "text-anchor": "top", "text-max-width": 9, "text-optional": true },
+      paint: { "text-color": cssVar("--text-1"), "text-halo-color": halo, "text-halo-width": 2 } },
     // bases: badges carry their own serviceability gauge, alert dot and QRA chip; IAF on top, never hidden
     baseSymbol("bases-alg", "alg", false, 5.5, 8),
     baseSymbol("bases-foreign", "foreign", false, 3.5, 6.5),
@@ -335,6 +354,7 @@ export function buildStyle(): StyleSpecification {
       "live-selection": emptyFc(),
       metar: emptyFc(),
       focus: emptyFc(),
+      connectivity: { ...emptyFc(), attribution: 'Road routes: Valhalla / FOSSGIS · © OpenStreetMap contributors' },
       "ops-zones": emptyFc(),
       "ops-rings": emptyFc(),
       "ops-ad-sites": emptyFc(),

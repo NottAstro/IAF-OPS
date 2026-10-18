@@ -55,3 +55,9 @@ OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
 | ECMWF open data | CC BY 4.0 |
 | Open-Meteo | CC BY 4.0 |
 | OpenWeatherMap | Provider terms |
+
+## Public-road routing
+
+Infra connectivity requests distance-based routes from the public [Valhalla / FOSSGIS](https://valhalla.openstreetmap.de/) service, using OpenStreetMap data (ODbL 1.0, copyright OpenStreetMap contributors). No Valhalla engine code or new library is bundled. Attribution and links to OpenStreetMap copyright and Fix the map appear in the connection card; the map attribution names the routing provider. Follow the provider's fair-use limits; this is a demo integration, not a guaranteed service.
+
+`data/fixtures/valhalla_route.json` is an unmodified routing response recorded on 2026-10-18 for the existing public VIJO / VIUT coordinates, with auto shortest-distance costing, hierarchy pruning disabled where supported, OSRM format and GeoJSON shape. It is used only for offline tests and is covered by the routing-data attribution above. It does not establish verified access to a base.

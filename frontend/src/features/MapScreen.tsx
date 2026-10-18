@@ -7,6 +7,7 @@ import { BasePanel } from "./BasePanel";
 import { Hud } from "./Hud";
 import { InfoCard } from "./InfoCard";
 import { LayerRail } from "./LayerRail";
+import { ConnectivityPanel } from "./ConnectivityPanel";
 
 /** Overlays on the always-mounted map (the map itself lives in the shell). */
 export function MapScreen({ user }: { user: User }) {
@@ -17,7 +18,7 @@ export function MapScreen({ user }: { user: User }) {
     <>
       <LayerRail liveTracks={s.liveTracks} />
       {!(sel?.kind === "base") && <Search />}
-      {sel?.kind === "base" && <BasePanel baseId={sel.id} user={user} />}
+      {sel?.kind === "base" && (s.connectivityFocus ? <ConnectivityPanel /> : <BasePanel baseId={sel.id} user={user} />)}
       {sel && sel.kind !== "base" && <InfoCard sel={sel} liveTracks={s.liveTracks} />}
       <Hud />
     </>

@@ -7,17 +7,18 @@ import type { Feature, Geometry, Point } from "geojson";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
 import { scheduledDestination, useLivePath } from "../api/live";
+import { type ConnectionSummary, type NearbyBase, useRoadConnection } from "../api/connectivity";
 import type { Base, BaseStatus, LiveTrack, Site } from "../api/types";
 import { LIVE_GROUP, type LayerId, type Selection, layerMode, useStore } from "../store";
 import { FLIGHT_CAT_TOKEN, cssVar } from "./colors";
-import { FOCUS_LAYERS, INDIA_BOUNDS, INTERACTIVE, LAYER_IDS, OVERLAY_BEFORE, REGION_BOUNDS, buildStyle } from "./style";
+import { CONNECTIVITY_LAYERS, FOCUS_LAYERS, INDIA_BOUNDS, INTERACTIVE, LAYER_IDS, OVERLAY_BEFORE, REGION_BOUNDS, buildStyle } from "./style";
 import { type BlockOpts, baseBlock, glyphIcon, iconImage } from "./symbols";
 import { useWind } from "./wind";
 import { greatCircle } from "./flightPath";
 
 interface Metar { icao: string; lat: number; lon: number; flight_category: string }
 interface Near { name: string; code?: string; icao?: string; iata?: string; lat: number; lon: number; distance_km: number | string }
-interface Connectivity { rail: Near[]; rail_major: Near[]; airports: Near[]; bases: Near[] }
+interface Connectivity { rail: Near[]; rail_major: Near[]; airports: Near[]; bases: NearbyBase[] }
 interface Fc { type: "FeatureCollection"; features: Feature[] }
 interface WxImpact { base_id: number; code: string; lon: number; lat: number; worst: string; at: string | null; runway_closed: boolean }
 
@@ -82,6 +83,7 @@ function toSelection(f: MapGeoJSONFeature): Selection {
 function hoverText(f: MapGeoJSONFeature): [string, string] {
   const p = f.properties as Record<string, string | number | undefined>;
   const id = f.layer.id;
+  if (id === "connectivity-bases") return [String(p.code), `${p.name}${p.distance_km != null ? ` · ${p.distance_km} km direct` : " · source base"}`];
   if (id === "ops-sim" || id === "ops-unk") return [`${p.label} (simulated)`, String(p.desc ?? "")];
   if (id === "ops-missions") return [String(p.code), `${p.priority} · ${p.name} · ${p.state}`];
   if (id === "ops-routes") return [`${p.code} (${p.priority})`, `${p.n_aircraft} × ${p.type} from ${p.base}${p.proposed ? " · proposed" : ""}`];
@@ -158,6 +160,11 @@ export function MapView({ hidden }: { hidden: boolean }) {
         return void history.back();
       }
       const f = m.queryRenderedFeatures(e.point, { layers: live() })[0];
+      if (f?.layer.id === "connectivity-bases" && st.connectivityFocus) {
+        const id = Number(f.properties.id);
+        if (id !== st.connectivityFocus.sourceId) st.set({ connectivityFocus: { ...st.connectivityFocus, destinationId: id } });
+        return;
+      }
       const sel = f ? toSelection(f) : null;
       if (sel) return st.set({ selection: sel, panelTab: sel.kind === "base" && st.mode === "INFRA" ? "Bw" : "Ov" });
       const { lat, lng: lon } = e.lngLat;
@@ -193,9 +200,13 @@ export function MapView({ hidden }: { hidden: boolean }) {
     enabled: s.mode === "WX" && s.wx.metar,
   });
   const selBase = s.selection?.kind === "base" ? s.selection.id : null;
+  const focus = s.mode === "INFRA" && !hidden && s.connectivityFocus?.sourceId === selBase ? s.connectivityFocus : null;
+  const road = useRoadConnection(focus?.sourceId ?? null, focus?.destinationId ?? null, focus?.mode === "road");
+  const focusSummary = useQuery({ queryKey: ["base-connectivity", focus?.sourceId],
+    queryFn: () => api<ConnectionSummary>(`/bases/${focus?.sourceId}/connections`), enabled: !!focus, staleTime: 300000 });
   const summary = useQuery({
-    queryKey: ["summary", selBase], queryFn: () => api<{ base: { lat: number; lon: number }; connectivity: Connectivity }>(`/bases/${selBase}/summary`),
-    enabled: s.mode === "INFRA" && selBase != null,
+    queryKey: ["summary", selBase], queryFn: () => api<{ base: { id: number; code: string; name: string; lat: number; lon: number }; connectivity: Connectivity }>(`/bases/${selBase}/summary`),
+    enabled: s.mode === "INFRA" && selBase != null && !focus,
   });
   useEffect(() => {
     if (live.data?.status) s.set({ feeds: { ...useStore.getState().feeds, ...live.data.status }, liveTracks: live.data.tracks });
@@ -276,15 +287,17 @@ export function MapView({ hidden }: { hidden: boolean }) {
     for (const [key, ids] of Object.entries(LAYER_IDS)) {
       const k = key as LayerId;
       const only = layerMode(k);
-      for (const id of ids) vis(id, s.layers[k] && (!only || only === s.mode));
+      for (const id of ids) vis(id, focus ? k === "india-border" || k === "intl-borders" || (k === "satellite" && s.layers.satellite) : s.layers[k] && (!only || only === s.mode));
     }
     vis("live-air", s.mode === "LIVE");
     vis("live-label", s.mode === "LIVE");
     vis("metar", s.mode === "WX" && s.wx.metar);
     vis("metar-label", s.mode === "WX" && s.wx.metar);
-    for (const id of FOCUS_LAYERS) vis(id, s.mode === "INFRA");
-    map.setPaintProperty("relief", "color-relief-opacity", s.layers.relief ? (s.mode === "WX" ? 0.35 : 0.8) : 0);
-  }, [map, s.layers, s.mode, s.wx.metar]);
+    for (const id of FOCUS_LAYERS) vis(id, s.mode === "INFRA" && !focus);
+    for (const id of CONNECTIVITY_LAYERS) vis(id, !!focus);
+    for (const id of ["lbl-country", "lbl-water", "runway", "hillshade"]) vis(id, !focus);
+    map.setPaintProperty("relief", "color-relief-opacity", !focus && s.layers.relief ? (s.mode === "WX" ? 0.35 : 0.8) : 0);
+  }, [map, s.layers, s.mode, s.wx.metar, focus]);
 
   // ---------------------------------------------------------------- air base badges
   const statusById = useMemo(() => new Map((status.data ?? []).map((v) => [v.base_id, v])), [status.data]);
@@ -415,7 +428,7 @@ export function MapView({ hidden }: { hidden: boolean }) {
   const appliedTilt = useRef<boolean | null>(null);
   useEffect(() => {
     if (!map) return;
-    const flat = s.mode === "WX";
+    const flat = s.mode === "WX" || !!focus;
     map.setTerrain(flat ? null : { source: "dem3d", exaggeration: s.exaggeration });
     map.setPaintProperty("hillshade", "hillshade-exaggeration", flat ? 0.55 : 0.8);
     if (flat) {
@@ -434,7 +447,11 @@ export function MapView({ hidden }: { hidden: boolean }) {
     }
     wasFlat.current = flat;
     appliedTilt.current = s.tilt;
-  }, [map, s.mode, s.exaggeration, s.tilt]);
+  }, [map, s.mode, s.exaggeration, s.tilt, !!focus]);
+
+  useEffect(() => {
+    if (hidden && s.connectivityFocus) s.set({ connectivityFocus: null });
+  }, [hidden, s.connectivityFocus, s.set]);
 
   // ---------------------------------------------------------------- infrastructure view: spotlight a base and its nearest connections
   useEffect(() => {
@@ -461,6 +478,53 @@ export function MapView({ hidden }: { hidden: boolean }) {
       ...links,
     ]);
   }, [map, s.mode, selBase, summary.data]);
+
+  // Connectivity focus is a temporary view override: saved layer and tilt preferences are never changed.
+  useEffect(() => {
+    if (!map) return;
+    const b = focusSummary.data?.base, nearby = focusSummary.data?.connectivity.bases ?? [];
+    if (!focus || !b || b.id !== focus.sourceId) return void setData(map, "connectivity", []);
+    const points: Feature[] = [b, ...nearby].map((n) => point(n.lon, n.lat, {
+      role: "base", id: n.id, code: n.code, name: n.name.replace(/^Air Force Station /, ""),
+      ...("distance_km" in n ? { distance_km: n.distance_km } : {}),
+      active: n.id === b.id || n.id === focus.destinationId,
+      icon: baseBlock({ color: cssVar(n.id === b.id ? "--accent-strong" : "--base-iaf"), text: cssVar("--text-1"),
+        kind: "jet", variant: "f", size: n.id === b.id ? "l" : "m", code: n.code }),
+    }));
+    for (const n of nearby) {
+      const active = n.id === focus.destinationId;
+      points.push(feature({ type: "LineString", coordinates: greatCircle([b.lon, b.lat], [n.lon, n.lat]) }, {
+        role: "direct", active, opacity: focus.destinationId == null ? 0.85 : active && focus.mode === "direct" ? 1 : 0.22,
+        label: `${n.code} · ${n.distance_km} km direct`,
+      }));
+    }
+    if (focus.mode === "road" && road.data?.status === "available" && road.data.source_id === b.id && road.data.destination_id === focus.destinationId) {
+      points.push(feature(road.data.geometry, { role: "road" }));
+      const n = nearby.find((v) => v.id === focus.destinationId);
+      const coords = road.data.geometry.coordinates;
+      if (n) {
+        points.push(feature({ type: "LineString", coordinates: [[b.lon, b.lat], coords[0]] }, { role: "access" }));
+        points.push(feature({ type: "LineString", coordinates: [coords[coords.length - 1], [n.lon, n.lat]] }, { role: "access" }));
+      }
+    }
+    setData(map, "connectivity", points);
+  }, [map, focus, focusSummary.data, road.data]);
+
+  const fitted = useRef("");
+  useEffect(() => {
+    if (!map || !focus) { fitted.current = ""; return; }
+    const b = focusSummary.data?.base;
+    if (!b || b.id !== focus.sourceId) return;
+    const key = `${focus.sourceId}:${focus.fitSeq}`;
+    if (fitted.current === key) return;
+    const coords: [number, number][] = [[b.lon, b.lat], ...(focusSummary.data?.connectivity.bases ?? []).map((n): [number, number] => [n.lon, n.lat])];
+    if (focus.mode === "road" && road.data?.status === "available") coords.push(...road.data.geometry.coordinates);
+    const bounds = new maplibregl.LngLatBounds(coords[0], coords[0]);
+    for (const p of coords) bounds.extend(p);
+    const wide = map.getContainer().clientWidth > 1000;
+    map.fitBounds(bounds, { padding: { top: 80, bottom: 65, left: wide ? 370 : 70, right: wide ? 385 : 30 }, maxZoom: 9, duration: 900 });
+    fitted.current = key;
+  }, [map, focus, focusSummary.data, road.data]);
 
   // ---------------------------------------------------------------- fly-to requests (search, overview, panel)
   useEffect(() => {
