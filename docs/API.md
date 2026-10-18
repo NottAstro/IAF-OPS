@@ -33,6 +33,12 @@
 - **Indian military aircraft, UAVs and drones barely appear on public ADS-B.** This is why simulated IAF tracks exist (PRD FR-LIVE-07) and why empty toggles say "not broadcast".
 
 ### 1.1 Aircraft enrichment
+
+Selected aircraft also use the authenticated local endpoint `GET /api/v1/live/aircraft/{hex}/trail`.
+It returns up to 120 observed `{lat, lon, alt_m, ts}` positions (UTC epoch seconds), empty if unseen/expired.
+History covers only the time since this server first saw the aircraft and expires with its live track.
+It makes no upstream requests. adsbdb airport coordinates, when present, support a labelled scheduled route;
+that route may differ from actual and is not a filed flight plan. No upstream trace service has been added.
 | Provider | Gives | Endpoint | Key | Limits | Terms | God's Eye | Ours |
 |---|---|---|---|---|---|---|---|
 | **adsbdb** ✔ | Type, registration, operator for a hex; route for a callsign | `https://api.adsbdb.com/v0/aircraft/{hex}` · `https://api.adsbdb.com/v0/callsign/{callsign}` (✔ `AIC101` → Air India route) | none | none published (be gentle) | free; route data from public sources | `server/providers/aircraft/enrichment.js` (24 h disk cache incl. misses) | On track click only; 24 h LRU incl. misses |

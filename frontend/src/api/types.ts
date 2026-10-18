@@ -86,6 +86,13 @@ export interface LiveTrack {
   is_military: boolean;
 }
 
+export interface TrailPoint { lat: number; lon: number; alt_m: number | null; ts: number }
+export interface RouteAirport { iata_code?: string; name?: string; latitude?: number; longitude?: number }
+export interface LiveEnrichment {
+  aircraft?: Record<string, string>;
+  route?: { origin?: RouteAirport; destination?: RouteAirport };
+}
+
 export interface FeedState {
   state: "LIVE" | "STALE" | "OFF";
   last_ok: number | null;

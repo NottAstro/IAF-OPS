@@ -5,7 +5,7 @@
 import type { ExpressionSpecification, LayerSpecification, SourceSpecification, StyleSpecification } from "maplibre-gl";
 import type { LayerId } from "../store";
 import { cssVar } from "./colors";
-import { airportBlock, placeIcon, stationIcon } from "./symbols";
+import { adIcon, airportBlock, placeIcon, stationIcon, towerIcon } from "./symbols";
 
 /** Camera limits: India fills the frame; panning stops short of Central Asia (no Tajikistan / Russia). */
 export const REGION_BOUNDS: [[number, number], [number, number]] = [[50, 1], [115, 39.5]];
@@ -47,11 +47,12 @@ export const LAYER_IDS: Record<LayerId, string[]> = {
   "ops-airspace": ["ops-air-line", "ops-air-label"],
   "ops-radar": ["ops-radar"],
   "ops-ad": ["ops-ad-fill", "ops-ad"],
+  "ops-ad-sites": ["ops-ad-sites"],
   "ops-wx": ["ops-wx", "ops-wx-label"],
 };
 
 /** Clickable layers, top-most first. */
-export const INTERACTIVE = ["ops-unk", "ops-sim", "ops-missions", "ops-routes", "live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
+export const INTERACTIVE = ["ops-unk", "ops-sim", "ops-missions", "ops-routes", "ops-ad-sites", "live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
 /** Weather rasters go under the boundaries, so borders and names stay readable through the clouds. */
 export const OVERLAY_BEFORE = "adm2";
 /** Base-connection spotlight layers (Infrastructure view). */
@@ -130,8 +131,9 @@ export function buildStyle(): StyleSpecification {
       { "line-color": cssVar("--map-rail-main"), "line-width": zoomLin(4.5, 0.8, 9, 2, 13, 3.2), "line-opacity": 0.9 }),
     infraLine("rail-ties", ["all", ["==", ["get", "class"], "rail"], ["!", ["has", "service"]]], 9, { "line-cap": "butt" },
       { "line-color": bg, "line-width": zoomLin(7, 0.6, 13, 1.4), "line-dasharray": [2, 2] }),
-    { id: "towers", type: "circle", source: "ours", "source-layer": "tower", minzoom: 9, layout: { visibility: "none" },
-      paint: { "circle-radius": 2.4, "circle-color": cssVar("--neutral"), "circle-opacity": 0.8 } },
+    { id: "towers", type: "symbol", source: "ours", "source-layer": "tower", minzoom: 9,
+      layout: { visibility: "none", "icon-image": towerIcon(), "icon-size": zoomLin(9, 0.85, 12, 0.95, 15, 1),
+        "icon-allow-overlap": false, "icon-padding": 2 } },
     { id: "stations", type: "symbol", source: "ours", "source-layer": "station", layout: {
         visibility: "none",
         "icon-image": x(["case", ["==", ["get", "rank"], 0], stationIcon(station, 10, true), stationIcon(station, 7, false)]),
@@ -260,12 +262,32 @@ export function buildStyle(): StyleSpecification {
         visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 9.5, "text-offset": [0, 1.1], "text-anchor": "top",
         "text-optional": true },
       paint: { "text-color": ["get", "color"], "text-halo-color": halo, "text-halo-width": 1.2 } },
+    { id: "ops-ad-sites", type: "symbol", source: "ops-ad-sites",
+      layout: { visibility: "none", "icon-image": adIcon(), "icon-size": zoomLin(3.5, 0.85, 9, 1.1),
+        "icon-allow-overlap": false, "icon-padding": 2,
+        "text-field": ["step", ["zoom"], "SIM", 7, ["concat", ["get", "code"], " SIM"]], "text-font": BOLD,
+        "text-size": 9, "text-offset": [0, 1.5], "text-anchor": "top", "text-optional": false },
+      paint: { "text-color": cssVar("--sim"), "text-halo-color": halo, "text-halo-width": 1.5 } },
+    // Observed trail and scheduled airport leg only; never derived from a heading.
+    { id: "live-trail", type: "line", source: "live-path", filter: ["==", ["get", "kind"], "trail"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": cssVar("--map-trail"), "line-width": 2.2 } },
+    { id: "live-schedule", type: "line", source: "live-path", filter: ["==", ["get", "kind"], "schedule"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": cssVar("--map-schedule"), "line-width": 1.8, "line-dasharray": [3, 3] } },
+    { id: "live-schedule-label", type: "symbol", source: "live-path", filter: ["==", ["get", "kind"], "schedule"],
+      layout: { "symbol-placement": "line-center", "text-field": "Scheduled route (adsbdb, may differ from actual)",
+        "text-font": REG, "text-size": 10, "text-keep-upright": true },
+      paint: { "text-color": cssVar("--map-schedule"), "text-halo-color": halo, "text-halo-width": 1.5 } },
     // bases: badges carry their own serviceability gauge, alert dot and QRA chip; IAF on top, never hidden
     baseSymbol("bases-alg", "alg", false, 5.5, 8),
     baseSymbol("bases-foreign", "foreign", false, 3.5, 6.5),
     baseSymbol("bases-mil", "mil", false, 4.5, 6.5),
     baseSymbol("bases-iaf", "iaf", true, 0, 5.5),
     // live air picture
+    { id: "live-selected", type: "circle", source: "live-selection",
+      paint: { "circle-radius": zoomLin(3, 11, 9, 17), "circle-color": cssVar("--map-trail", 0.12),
+        "circle-stroke-color": cssVar("--map-trail"), "circle-stroke-width": 2 } },
     { id: "live-air", type: "symbol", source: "live",
       layout: {
         "icon-image": ["get", "icon"], "icon-rotate": ["get", "rot"], "icon-rotation-alignment": "map",
@@ -309,10 +331,13 @@ export function buildStyle(): StyleSpecification {
       },
       bases: emptyFc(),
       live: emptyFc(),
+      "live-path": emptyFc(),
+      "live-selection": emptyFc(),
       metar: emptyFc(),
       focus: emptyFc(),
       "ops-zones": emptyFc(),
       "ops-rings": emptyFc(),
+      "ops-ad-sites": emptyFc(),
       "ops-routes": emptyFc(),
       "ops-missions": emptyFc(),
       "ops-sim": emptyFc(),

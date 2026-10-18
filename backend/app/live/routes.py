@@ -47,3 +47,9 @@ async def enrich(hex_id: str, callsign: str = "", user: dict = Depends(current_u
         return await enrich_cache.get(f"{hex_id}:{callsign}", 86400, fetch)
     except Exception:
         return {}
+
+
+@router.get("/aircraft/{hex_id}/trail")
+async def trail(hex_id: str, user: dict = Depends(current_user)) -> list[dict]:
+    """Latest 120 observed positions, only since this server first saw the aircraft; ts is UTC epoch seconds."""
+    return list(feeds.TRAILS.get(hex_id.lower(), ()))

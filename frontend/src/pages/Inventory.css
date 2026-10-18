@@ -1,0 +1,41 @@
+.inventory-groups {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s1);
+  padding: var(--s1);
+  margin-bottom: var(--s2);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--surface-1);
+}
+
+.inventory-group {
+  flex: 1 1 auto;
+  padding: var(--s2) var(--s3);
+  border: 1px solid transparent;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.inventory-group:hover {
+  background: var(--surface-2);
+  color: var(--text-1);
+}
+
+.inventory-group.on {
+  border-color: var(--accent);
+  background: var(--accent-tint);
+  color: var(--accent-strong);
+}
+
+.inventory-group:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.inventory-sections {
+  margin-bottom: var(--s4);
+}

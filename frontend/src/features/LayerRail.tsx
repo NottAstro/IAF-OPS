@@ -2,7 +2,8 @@ import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { api } from "../api/client";
 import { zulu } from "../lib/format";
-import { toggleTilt } from "../map/MapView";
+import { OptionPanel } from "../components/OptionPanel";
+import { SettingsWindow } from "../components/SettingsWindow";
 import { LAYERS, LAYER_GROUPS, LIVE_CATS, LIVE_GROUP, type LayerId, type LiveCat, MODES, type Mode, type WxLayer, WX_LAYERS, layerMode, useStore } from "../store";
 
 const CAT: Record<LiveCat, { label: string; color: string; note: string }> = {
@@ -32,7 +33,7 @@ const SWATCH: Record<LayerId, ReactNode> = {
   rail: <span className="swatch-line" style={{ borderColor: "var(--map-rail-main)", borderTopWidth: 3, borderTopStyle: "dashed" }} />,
   stations: <span className="swatch" style={{ background: "var(--map-station)", width: 9, height: 9, borderRadius: 2, justifySelf: "center" }} />,
   "civil-airports": <span className="swatch" style={{ background: "#e3ecf8", borderRadius: 3 }} />,
-  towers: <span className="swatch-dot" style={{ background: "var(--neutral)", width: 6, height: 6 }} />,
+  towers: <svg className="swatch" viewBox="0 0 24 24" fill="var(--bg)" stroke="var(--map-tower)" strokeWidth="1.6" aria-hidden><rect x="1" y="1" width="22" height="22" rx="4" /><path fill="none" d="m8 20 4-15 4 15M9 16h6M7 6Q2 10 7 13M17 6q5 4 0 7" /></svg>,
   relief: <span className="swatch" style={{ background: "linear-gradient(135deg, var(--relief-1), var(--relief-3), var(--relief-5))" }} />,
   satellite: <span className="swatch" style={{ background: "linear-gradient(135deg, #2b4a3a, #4a5b72)" }} />,
   "iaf-bases": <span className="swatch" style={{ background: "var(--base-iaf)", boxShadow: "0 0 6px var(--base-iaf)" }} />,
@@ -52,6 +53,7 @@ const SWATCH: Record<LayerId, ReactNode> = {
   "ops-airspace": <span className="swatch" style={{ border: "1px dashed var(--line)" }} />,
   "ops-radar": <span className="swatch" style={{ borderRadius: "50%", border: "1px dotted var(--info)" }} />,
   "ops-ad": <span className="swatch" style={{ borderRadius: "50%", border: "1px dashed var(--accent)", background: "var(--accent-tint)" }} />,
+  "ops-ad-sites": <span className="swatch" style={{ color: "var(--sim)", border: "1px solid var(--sim)", borderRadius: "0 0 50% 50%", textAlign: "center" }}>⌃</span>,
   "ops-wx": <span className="swatch" style={{ borderRadius: "50%", border: "2px solid var(--warning)" }} />,
 };
 
@@ -77,31 +79,19 @@ function OpsStatus() {
   );
 }
 
-function Switch({ on, onChange, label }: { on: boolean; onChange: () => void; label: string }) {
-  return <button type="button" role="switch" aria-checked={on} aria-label={label} className="switch" onClick={(e) => { e.stopPropagation(); onChange(); }} />;
+function Switch({ on, onChange, label, disabled }: { on: boolean; onChange: () => void; label: string; disabled?: boolean }) {
+  return <button type="button" role="switch" aria-checked={on} aria-label={label} disabled={disabled} className="switch" onClick={(e) => { e.stopPropagation(); onChange(); }} />;
 }
 
-function Toggle({ swatch, label, on, onChange, count, note }: { swatch: ReactNode; label: string; on: boolean; onChange: () => void; count?: ReactNode; note?: string }) {
+function Toggle({ swatch, label, on, onChange, count, note, disabled }: { swatch: ReactNode; label: string; on: boolean; onChange: () => void; count?: ReactNode; note?: string; disabled?: boolean }) {
   return (
-    <div className="toggle-row" onClick={onChange}>
+    <div className="toggle-row" onClick={disabled ? undefined : onChange}>
       {swatch}
       <span className="toggle-label">{label}</span>
       <span className="toggle-count">{count}</span>
-      <Switch on={on} onChange={onChange} label={label} />
+      <Switch on={on} onChange={onChange} label={label} disabled={disabled} />
       {note && <span className="toggle-note">{note}</span>}
     </div>
-  );
-}
-
-function Group({ title, meta, children, start = true }: { title: string; meta?: string; children: ReactNode; start?: boolean }) {
-  const [open, setOpen] = useState(start);
-  return (
-    <section className="group">
-      <button className="group-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-        <span className={`chev${open ? " open" : ""}`} aria-hidden>›</span>{title}<span className="group-meta">{meta}</span>
-      </button>
-      {open && <div className="group-body">{children}</div>}
-    </section>
   );
 }
 
@@ -123,6 +113,7 @@ const Icon = ({ children }: { children: ReactNode }) => (
 export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof LIVE_GROUP; on_ground: boolean }[] }) {
   const s = useStore();
   const [pane, setPane] = useState<"view" | "settings" | null>("view");
+  const [settingsWindow, setSettingsWindow] = useState<string | null>(null);
   const owm = useQuery({ queryKey: ["wx-status"], queryFn: () => api<{ owm: boolean }>("/wx/status"), enabled: s.mode === "WX" });
   const counts: Record<string, number> = {};
   for (const t of liveTracks) if (!t.on_ground && LIVE_GROUP[t.category]) counts[LIVE_GROUP[t.category]] = (counts[LIVE_GROUP[t.category]] ?? 0) + 1;
@@ -177,10 +168,9 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
                 <input type="range" min={0.3} max={1} step={0.05} value={s.overlayOpacity} onChange={(e) => s.set({ overlayOpacity: Number(e.target.value) })} /></label>
             )}
             {s.wx.wind && <>
-              <label className="tool-row">Wind model
-                <select className="select" value={s.windModel} onChange={(e) => s.set({ windModel: e.target.value as "gfs" | "ifs" })}>
-                  <option value="gfs">GFS (NOAA)</option><option value="ifs">IFS (ECMWF)</option>
-                </select></label>
+              <div className="tool-row">Wind model
+                <OptionPanel label="Wind model" value={s.windModel} options={[{ value: "gfs", label: "GFS (NOAA)" }, { value: "ifs", label: "IFS (ECMWF)" }]}
+                  onChange={(windModel) => s.set({ windModel })} /></div>
               <div className="toggle-note" style={{ margin: "4px 0 0" }}>Wind speed at 10 m (knots)</div>
               <Ramp stops={["#82afeb", "#e1f0ff", "#fde68a", "#f97316", "#ef4444"]} labels={["0", "15", "25", "35", "60+"]} />
             </>}
@@ -203,33 +193,35 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
           {head("Map settings")}
           <p className="view-hint">Layers shown in every view.</p>
           {LAYER_GROUPS.filter((g) => groupIds(g).every((k) => !layerMode(k))).map((g) => (
-            <Group key={g} title={g} meta={onCount(groupIds(g), s.layers)}>
-              {groupIds(g).map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)} />)}
-              {g === "Terrain" && <>
+            <SettingsWindow key={g} title={g} meta={onCount(groupIds(g), s.layers)} open={settingsWindow === g}
+              onOpen={() => setSettingsWindow(g)} onClose={() => setSettingsWindow((current) => current === g ? null : current)}>
+              {(g === "View" ? ["relief"] as const : groupIds(g)).map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)} />)}
+              {g === "View" && <>
                 {s.layers.relief && <Ramp stops={["var(--relief-0)", "var(--relief-2)", "var(--relief-3)", "var(--relief-4)", "var(--relief-5)"]}
                   labels={["0 m", "1,000", "2,500", "4,500", "6,500"]} />}
                 <label className="tool-row">Relief height
                   <input type="range" min={1} max={3} step={0.5} value={s.exaggeration} onChange={(e) => s.set({ exaggeration: Number(e.target.value) })} />
                   <span className="mono" style={{ color: "var(--text-1)" }}>{s.exaggeration}×</span></label>
-                <div className="tool-row" style={{ justifyContent: "space-between" }}>
-                  <span>Camera</span>
-                  <button className="btn btn-sm" onClick={toggleTilt} disabled={s.mode === "WX"}>Tilt / look straight down</button>
-                </div>
+                <Toggle swatch={SWATCH.satellite} label={LAYERS.satellite.label} on={s.layers.satellite} onChange={() => s.toggleLayer("satellite")} />
+                <Toggle swatch={<span className="toggle-count">3D</span>} label="3D tilt" on={s.tilt} onChange={() => s.set({ tilt: !s.tilt })} disabled={s.mode === "WX"} />
                 <div className="toggle-note" style={{ margin: "2px 0 0" }}>
-                  {s.mode === "WX" ? "The Weather view is always flat; terrain returns in Live and Infra." : "3D terrain in Live and Infra; right-drag to rotate and tilt."}
+                  {s.mode === "WX" ? "The Weather view is always flat; your tilt preference returns in Live, Infra and Ops." : "Right-drag to rotate and tilt. 3D tilt and relief height are saved for every view."}
                 </div>
               </>}
-            </Group>
+            </SettingsWindow>
           ))}
-          <Group title="How to read the symbols" start={false}>
+          <SettingsWindow title="How to read the symbols" open={settingsWindow === "symbols"}
+            onOpen={() => setSettingsWindow("symbols")} onClose={() => setSettingsWindow((current) => current === "symbols" ? null : current)}>
             <div className="toggle-note" style={{ fontSize: 12, lineHeight: "18px", color: "var(--text-2)", margin: 0 }}>
               <p style={{ margin: "4px 0" }}>Air bases are rectangular tags coloured by owner: neon blue IAF, grey Navy / Army / Coast Guard, red Pakistan and China, green other neighbours. Small runway tags are advanced landing grounds. Zoom in and the tag shows the base code.</p>
               <p style={{ margin: "4px 0" }}>The bar under an IAF tag is aircraft serviceability (full bar = 100%): green 70% or more, yellow 45–69%, red under 45%.</p>
               <p style={{ margin: "4px 0" }}>A dot on the tag's corner marks an open warning (orange) or critical (red) alert. The "Q" end-cap is the quick reaction alert posture: blue when met, red when short.</p>
               <p style={{ margin: "4px 0" }}>Civil airports are light tags with a dark airliner and the IATA code. Live aircraft: yellow civil, neon blue military, orange UAVs and drones, red in an emergency.</p>
+              <p style={{ margin: "4px 0" }}>Telecom towers are masts with signal arcs on dark outlined tiles. Violet shields with an upward chevron are air defence sites, shown only in Ops. <span className="sim-badge">SIM</span> These sites and their launcher counts are simulated.</p>
+              <p style={{ margin: "4px 0" }}>A selected live aircraft has a blue ring and solid blue recorded trail. A dashed teal line is its scheduled route (adsbdb, may differ from actual).</p>
               <p style={{ margin: "4px 0" }}>The glowing line is India's boundary as officially depicted by the Government of India.</p>
             </div>
-          </Group>
+          </SettingsWindow>
         </aside>
       )}
     </div>
