@@ -145,3 +145,19 @@ ALTER TABLE gis_point ADD COLUMN IF NOT EXISTS rank smallint;
 -- area for label priority in vector tiles (computed once)
 ALTER TABLE gis_admin_area ADD COLUMN IF NOT EXISTS area_km2 double precision;
 UPDATE gis_admin_area SET area_km2 = ST_Area(geom::geography) / 1e6 WHERE area_km2 IS NULL AND geom IS NOT NULL;
+
+-- Phase 2 additions for databases created before them (models.py creates them on a fresh database)
+ALTER TABLE plan_item ADD COLUMN IF NOT EXISTS support jsonb;              -- D36 tanker leg
+ALTER TABLE sortie ADD COLUMN IF NOT EXISTS reroute_ts timestamptz;        -- D37 in-flight re-role
+ALTER TABLE sortie_aircraft ADD COLUMN IF NOT EXISTS hsm_at_launch double precision;  -- D38 exposure
+ALTER TABLE mission ADD COLUMN IF NOT EXISTS depends_on_id bigint REFERENCES mission(id);       -- D41 support dependency
+ALTER TABLE mission ADD COLUMN IF NOT EXISTS parent_mission_id bigint REFERENCES mission(id);   -- D42 split parts
+ALTER TABLE mission ADD COLUMN IF NOT EXISTS part_no integer;
+ALTER TABLE mission ADD COLUMN IF NOT EXISTS parts integer;
+ALTER TABLE mission ADD COLUMN IF NOT EXISTS split_kind varchar(8);
+ALTER TABLE mission DROP CONSTRAINT IF EXISTS mission_status_check;
+ALTER TABLE mission ADD CONSTRAINT mission_status_check CHECK (status IN
+  ('REQUESTED', 'APPROVED', 'PLANNED', 'TASKED', 'ACTIVE', 'COMPLETED', 'CANCELLED', 'SPLIT'));
+ALTER TABLE airspace_zone DROP CONSTRAINT IF EXISTS airspace_zone_kind_check;                   -- D44 public airspace import
+ALTER TABLE airspace_zone ADD CONSTRAINT airspace_zone_kind_check CHECK (kind IN
+  ('TRAINING_AREA', 'RESTRICTED', 'DANGER', 'CORRIDOR', 'TEMP_RESERVATION', 'CIVIL_TERMINAL'));

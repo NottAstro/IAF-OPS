@@ -26,6 +26,7 @@ DUTY_STATUS = ("ON_DUTY", "STANDBY", "QRA", "BRIEFED", "AIRBORNE", "CREW_REST", 
 SORTIE_STATUS = ("PLANNED", "CREWED", "READY", "AIRBORNE", "ON_STATION", "RTB", "LANDED", "COMPLETED",
                  "CANCELLED", "ABORTED")
 ACTIVE_SORTIE = ("CREWED", "READY", "AIRBORNE", "ON_STATION", "RTB")
+MISSION_STATUS = ("REQUESTED", "APPROVED", "PLANNED", "TASKED", "ACTIVE", "COMPLETED", "CANCELLED", "SPLIT")
 
 
 class Base(DeclarativeBase):
@@ -272,15 +273,37 @@ class Mission(Common, Base):
     window_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     window_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     area_geom = mapped_column(Geometry("POLYGON", srid=4326))
-    status: Mapped[str] = mapped_column(E("REQUESTED", "APPROVED", "ACTIVE", "COMPLETED", "CANCELLED"))
+    status: Mapped[str] = mapped_column(E(*MISSION_STATUS), index=True)
     requesting_command_id: Mapped[int | None] = fk("command", nullable=True)
+    # Phase 2 tasking (PRD §17 FR-MSN). Geometry stays inside India and >= border_buffer_km from it (I8, I15).
+    target_geom = mapped_column(Geometry("POINT", srid=4326))
+    target_base_id: Mapped[int | None] = fk("base", nullable=True)          # airlift / CASEVAC destination
+    required_aircraft: Mapped[int] = mapped_column(Integer, default=2, server_default="2")
+    eligible_roles: Mapped[list[str] | None] = mapped_column(ARRAY(Text))   # aircraft_type.role values
+    loadout_code: Mapped[str | None] = mapped_column(String(24))
+    on_station_min: Mapped[int] = mapped_column(Integer, default=60, server_default="60")
+    min_quals: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    max_risk: Mapped[str] = mapped_column(E("LOW", "MED", "HIGH"), default="MED", server_default="MED")
+    notes: Mapped[str | None] = mapped_column(Text)
+    requested_by: Mapped[int | None] = mapped_column(BigInteger)
+    approved_by: Mapped[int | None] = mapped_column(BigInteger)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    outcome: Mapped[str] = mapped_column(E("NONE", "PARTIAL", "MET", "MISSED"), default="NONE", server_default="NONE")
+    on_station_achieved_min: Mapped[float] = mapped_column(Float, default=0, server_default="0")
+    # D41: needs this mission (an AEW&C orbit) on station for its whole time on station
+    depends_on_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("mission.id"), index=True)
+    # D42: a part of a split mission (status SPLIT on the parent): RELIEF = one shift in time, BASES = a share of aircraft
+    parent_mission_id: Mapped[int | None] = mapped_column(BigInteger, ForeignKey("mission.id"), index=True)
+    part_no: Mapped[int | None] = mapped_column(Integer)
+    parts: Mapped[int | None] = mapped_column(Integer)
+    split_kind: Mapped[str | None] = mapped_column(String(8))
 
 
 class Sortie(Common, Base):
     __tablename__ = "sortie"
     code: Mapped[str] = mapped_column(String(32), unique=True)
     mission_id: Mapped[int | None] = fk("mission", nullable=True)
-    origin: Mapped[str] = mapped_column(E("SIM_PROGRAMME", "HUMAN", "QRA_SCRAMBLE"))
+    origin: Mapped[str] = mapped_column(E("SIM_PROGRAMME", "HUMAN", "QRA_SCRAMBLE", "PLAN"))
     mission_type: Mapped[str] = mapped_column(E(*MISSION_TYPES))
     priority: Mapped[str] = mapped_column(E("P1", "P2", "P3", "P4"))
     departure_base_id: Mapped[int] = fk("base")
@@ -298,6 +321,9 @@ class Sortie(Common, Base):
     fuel_planned_kg: Mapped[float] = mapped_column(Float, default=0)
     fuel_used_kg: Mapped[float] = mapped_column(Float, default=0)
     target_track_id: Mapped[str | None] = mapped_column(Text)
+    loadout_code: Mapped[str | None] = mapped_column(String(24))
+    plan_item_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    reroute_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))   # in-flight re-role: new route starts here
 
 
 class SortieAircraft(Common, Base):
@@ -306,6 +332,7 @@ class SortieAircraft(Common, Base):
     aircraft_id: Mapped[int] = fk("aircraft")
     callsign: Mapped[str] = mapped_column(Text)
     formation_pos: Mapped[int] = mapped_column(Integer, default=1)
+    hsm_at_launch: Mapped[float | None] = mapped_column(Float)   # hours since maintenance when it flew (D38 exposure)
 
 
 class SortieCrew(Common, Base):
@@ -484,7 +511,8 @@ class AuditLog(Base):
     actor_role: Mapped[str | None] = mapped_column(Text)
     action: Mapped[str] = mapped_column(E("CREATE", "UPDATE", "DELETE", "RETIRE", "LOGIN", "LOGIN_FAILED",
                                           "LOGOUT", "ALERT_ACK", "SIM_CONTROL", "USER_ADMIN", "EXPORT",
-                                          "SIM_TRANSITION"))
+                                          "SIM_TRANSITION", "APPROVE", "PLAN_GENERATE", "PLAN_APPROVE",
+                                          "PLAN_REJECT", "PLAN_COMMIT", "PLAN_OVERRIDE", "INJECT"))
     entity_type: Mapped[str | None] = mapped_column(Text, index=True)
     entity_id: Mapped[int | None] = mapped_column(BigInteger)
     base_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
@@ -499,7 +527,8 @@ class Alert(Base):
     kind: Mapped[str] = mapped_column(E("LOW_FUEL", "FUEL_BELOW_RESERVE", "LOW_SERVICEABILITY", "QRA_SHORTFALL",
                                         "CREW_FATIGUE", "CREW_SHORTFALL", "MEDICAL_EXPIRY", "CURRENCY_LAPSE",
                                         "MAINTENANCE_OVERDUE", "STOCK_BELOW_REORDER", "RADAR_DOWN", "AD_DEGRADED",
-                                        "COMMS_DOWN", "WX_BELOW_MINIMA", "FEED_STALE", "UNKNOWN_TRACK"))
+                                        "COMMS_DOWN", "WX_BELOW_MINIMA", "FEED_STALE", "UNKNOWN_TRACK",
+                                        "MISSION_UNCOVERED", "PLAN_AT_RISK", "RETASK_PROPOSED"))
     severity: Mapped[str] = mapped_column(E("INFO", "CAUTION", "WARNING", "CRITICAL"))
     status: Mapped[str] = mapped_column(E("OPEN", "ACKNOWLEDGED", "CLEARED"), default="OPEN", index=True)
     entity_type: Mapped[str | None] = mapped_column(Text)
@@ -537,6 +566,232 @@ class SimState(Base):
     speed: Mapped[float] = mapped_column(Float, default=10)
     paused: Mapped[bool] = mapped_column(Boolean, default=False)
     last_programme_date: Mapped[date | None] = mapped_column(Date)
+
+
+# ---------------------------------------------------------------- I. Phase 2 decision support (PHASE2_IMPLEMENTATION_PLAN §6)
+class LoadoutConfig(Common, Base):
+    """Generic weapon-load configuration (ARCHITECTURE D30): category counts only, no real store names."""
+    __tablename__ = "loadout_config"
+    code: Mapped[str] = mapped_column(String(24), unique=True)
+    name: Mapped[str] = mapped_column(Text)
+    role_family: Mapped[str] = mapped_column(Text)
+    items: Mapped[dict] = mapped_column(JSONB)                      # {"ARMAMENT_AAM_BVR": 4, ...} per aircraft
+    fuel_penalty_pct: Mapped[float] = mapped_column(Float, default=0)
+    radius_factor: Mapped[float] = mapped_column(Float, default=1.0)
+    description: Mapped[str | None] = mapped_column(Text)
+
+
+class TypeLoadout(Common, Base):
+    __tablename__ = "type_loadout"
+    __table_args__ = (UniqueConstraint("aircraft_type_id", "loadout_id"),)
+    aircraft_type_id: Mapped[int] = fk("aircraft_type")
+    loadout_id: Mapped[int] = fk("loadout_config")
+
+
+class AirspaceZone(Common, Base):
+    __tablename__ = "airspace_zone"
+    code: Mapped[str] = mapped_column(String(24), unique=True)
+    name: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(E("TRAINING_AREA", "RESTRICTED", "DANGER", "CORRIDOR", "TEMP_RESERVATION", "CIVIL_TERMINAL"))
+    geom = mapped_column(Geometry("POLYGON", srid=4326), nullable=False)
+    lower_m: Mapped[float] = mapped_column(Float, default=0)
+    upper_m: Mapped[float] = mapped_column(Float, default=15000)
+    capacity_packages: Mapped[int] = mapped_column(Integer, default=2)
+    base_id: Mapped[int | None] = fk("base", nullable=True)
+    active_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    active_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scenario_id: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class ThreatZone(Common, Base):
+    """Generic risk areas (ARCHITECTURE D31): border bands by default, everything else is an exercise inject."""
+    __tablename__ = "threat_zone"
+    code: Mapped[str] = mapped_column(String(32), unique=True)
+    name: Mapped[str] = mapped_column(Text)
+    kind: Mapped[str] = mapped_column(E("BORDER_BAND", "EXERCISE_SAM", "EXERCISE_CAP", "EXERCISE_EW", "UNKNOWN_ACTIVITY"))
+    geom = mapped_column(Geometry("MULTIPOLYGON", srid=4326), nullable=False)
+    risk_level: Mapped[float] = mapped_column(Float)                 # 0..1
+    active_from: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    active_to: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    scenario_id: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class WxBaseForecast(Base):
+    __tablename__ = "wx_base_forecast"
+    __table_args__ = (UniqueConstraint("base_id", "valid_ts", "source"),)
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    base_id: Mapped[int] = fk("base")
+    valid_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    ceiling_ft: Mapped[float | None] = mapped_column(Float)          # None = no ceiling
+    vis_m: Mapped[float] = mapped_column(Float)
+    wind_kt: Mapped[float] = mapped_column(Float, default=0)
+    gust_kt: Mapped[float | None] = mapped_column(Float)
+    wind_dir: Mapped[float | None] = mapped_column(Float)
+    flight_cat: Mapped[str] = mapped_column(E("VFR", "MVFR", "IFR", "LIFR"))
+    source: Mapped[str] = mapped_column(E("SYNTHETIC", "OPEN_METEO", "EXERCISE"))
+    fetched_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+PLAN_STATUS = ("DRAFT", "PROPOSED", "APPROVED", "COMMITTED", "SUPERSEDED", "REJECTED")
+
+
+class Plan(Base):
+    __tablename__ = "plan"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    version: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
+    parent_plan_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    kind: Mapped[str] = mapped_column(E("PLAN", "RETASK", "WHATIF"), default="PLAN")
+    scope: Mapped[str] = mapped_column(E("THEATRE", "COMMAND"), default="THEATRE")
+    command_id: Mapped[int | None] = mapped_column(BigInteger)
+    horizon_start: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    horizon_end: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(E(*PLAN_STATUS), default="PROPOSED", index=True)
+    preset: Mapped[str] = mapped_column(Text, default="BALANCED")
+    weights: Mapped[dict | None] = mapped_column(JSONB)
+    seed: Mapped[int] = mapped_column(Integer, default=0)
+    solver_status: Mapped[str | None] = mapped_column(Text)
+    solve_ms: Mapped[int | None] = mapped_column(Integer)
+    kpis: Mapped[dict | None] = mapped_column(JSONB)
+    summary: Mapped[str | None] = mapped_column(Text)
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    approved_by: Mapped[int | None] = mapped_column(BigInteger)
+    approved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    committed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    trigger_disruption_id: Mapped[int | None] = mapped_column(BigInteger)
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class PlanItem(Base):
+    __tablename__ = "plan_item"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    plan_id: Mapped[int] = fk("plan")
+    mission_id: Mapped[int] = fk("mission")
+    base_id: Mapped[int] = fk("base")
+    recovery_base_id: Mapped[int | None] = mapped_column(BigInteger)
+    aircraft_type_id: Mapped[int] = fk("aircraft_type", index=False)
+    loadout_code: Mapped[str | None] = mapped_column(String(24))
+    launch_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    on_station_ts: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    recovery_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    n_aircraft: Mapped[int] = mapped_column(Integer)
+    aircraft_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger))
+    aircrew_ids: Mapped[list[int]] = mapped_column(ARRAY(BigInteger))
+    crew_positions: Mapped[list | None] = mapped_column(JSONB)       # [[aircrew_id, aircraft_id, position], ...]
+    route_geom = mapped_column(Geometry("LINESTRING", srid=4326))
+    risk: Mapped[float] = mapped_column(Float, default=0)
+    fuel_l: Mapped[float] = mapped_column(Float, default=0)
+    score: Mapped[dict | None] = mapped_column(JSONB)
+    explanation: Mapped[dict | None] = mapped_column(JSONB)
+    alternatives: Mapped[list | None] = mapped_column(JSONB)
+    change: Mapped[str | None] = mapped_column(Text)                 # vs parent plan: KEPT/SWAP/MOVED/NEW/DIVERT
+    status: Mapped[str] = mapped_column(E("PROPOSED", "APPROVED", "REJECTED", "COMMITTED", "SUPERSEDED"),
+                                        default="PROPOSED")
+    sortie_id: Mapped[int | None] = mapped_column(BigInteger)
+    source_item_id: Mapped[int | None] = mapped_column(BigInteger)   # the parent-plan item this one replaces
+    support: Mapped[dict | None] = mapped_column(JSONB)              # support leg (tanker, D36) with its tails, crew, sortie
+
+
+class PlanUnmet(Base):
+    __tablename__ = "plan_unmet"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    plan_id: Mapped[int] = fk("plan")
+    mission_id: Mapped[int] = fk("mission")
+    reasons: Mapped[list] = mapped_column(JSONB)
+    fixes: Mapped[list] = mapped_column(JSONB)
+    dropped_item_id: Mapped[int | None] = mapped_column(BigInteger)  # re-task: the parent item that was dropped
+
+
+class Disruption(Base):
+    __tablename__ = "disruption"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    kind: Mapped[str] = mapped_column(E("AIRCRAFT_US", "CREW_UNAVAILABLE", "RUNWAY_CLOSED", "WX_BELOW_MINIMA",
+                                        "THREAT_ACTIVATED", "AIRSPACE_RESERVED", "FUEL_SHORT", "STOCK_SHORT",
+                                        "MISSION_NEW", "MISSION_CHANGED", "RECOVERY_UNSAFE", "INJECT"))
+    base_id: Mapped[int | None] = mapped_column(BigInteger)
+    entity_type: Mapped[str | None] = mapped_column(Text)
+    entity_id: Mapped[int | None] = mapped_column(BigInteger)
+    message: Mapped[str] = mapped_column(Text)
+    payload: Mapped[dict | None] = mapped_column(JSONB)
+    status: Mapped[str] = mapped_column(E("OPEN", "ASSESSED", "RESOLVED", "IGNORED"), default="OPEN", index=True)
+    dedup_key: Mapped[str] = mapped_column(Text, index=True)
+    impacted_item_ids: Mapped[list[int] | None] = mapped_column(ARRAY(BigInteger))
+    proposal_plan_id: Mapped[int | None] = mapped_column(BigInteger)
+    proposal_ms: Mapped[int | None] = mapped_column(Integer)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())  # wall clock
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class MaintenanceEvent(Base):
+    """Maintenance log (D38): defects found before, during or after a sortie, and scheduled inspections. The snag-risk
+    model (decide/predict.py) learns from this log joined to the sorties each tail flew."""
+    __tablename__ = "maintenance_event"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    aircraft_id: Mapped[int] = mapped_column(BigInteger, ForeignKey("aircraft.id"), index=True)
+    ts: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    kind: Mapped[str] = mapped_column(E("PREFLIGHT", "AIRBORNE", "POSTFLIGHT", "SCHEDULED"))
+    sortie_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    hours_since_maint: Mapped[float] = mapped_column(Float)
+    airframe_hours: Mapped[float] = mapped_column(Float)
+    planned_h: Mapped[float | None] = mapped_column(Float)      # the sortie's planned length (defects only)
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+
+class MlModel(Base):
+    """A trained model and its card (D38). Only `snag_risk` today; the newest row per name is the one in use."""
+    __tablename__ = "ml_model"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(String(32), index=True)
+    trained_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())   # wall clock
+    data_until: Mapped[datetime] = mapped_column(DateTime(timezone=True))                              # sim time
+    features: Mapped[list] = mapped_column(JSONB)
+    coef: Mapped[list] = mapped_column(JSONB)
+    scale: Mapped[dict] = mapped_column(JSONB)
+    metrics: Mapped[dict] = mapped_column(JSONB)
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+
+class ManualSession(Base):
+    """Manual planning baseline (D43): one timed attempt to plan a snapshot by hand, and the optimiser on the same one."""
+    __tablename__ = "manual_session"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    user_id: Mapped[int] = mapped_column(BigInteger, index=True)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())   # wall clock
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sim_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    missions: Mapped[int] = mapped_column(Integer, default=0)
+    checks: Mapped[int] = mapped_column(Integer, default=0)
+    picks: Mapped[list | None] = mapped_column(JSONB)
+    result: Mapped[dict | None] = mapped_column(JSONB)        # manual coverage / violations, optimiser on the same snapshot
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
+
+
+class Scenario(Base):
+    __tablename__ = "scenario"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, unique=True)
+    description: Mapped[str | None] = mapped_column(Text)
+    speed: Mapped[float] = mapped_column(Float, default=60)
+    injects: Mapped[list] = mapped_column(JSONB)                     # [{offset_min, kind, params, label}]
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    is_simulated: Mapped[bool] = mapped_column(Boolean, default=True)
+
+
+class ExerciseRun(Base):
+    __tablename__ = "exercise_run"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    scenario_id: Mapped[int | None] = mapped_column(BigInteger)
+    name: Mapped[str] = mapped_column(Text)
+    status: Mapped[str] = mapped_column(E("RUNNING", "ENDED"), default="RUNNING", index=True)
+    started_real: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    started_sim: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    ended_sim: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    injects: Mapped[list] = mapped_column(JSONB, default=list)       # scenario injects + live ones, with applied_at
+    kpi_timeline: Mapped[list] = mapped_column(JSONB, default=list)  # [{sim_ts, metric: value...}]
+    started_by: Mapped[int | None] = mapped_column(BigInteger)
 
 
 # ---------------------------------------------------------------- H. static GIS (pipeline-owned)
@@ -585,6 +840,16 @@ class GisPoint(Base):
     height_m: Mapped[float | None] = mapped_column(Float)
     rank: Mapped[int | None] = mapped_column(SmallInteger)  # RAIL_STATION importance: 0 major … 2 minor
     geom = mapped_column(Geometry("POINT", srid=4326))
+
+
+class GisDefactoAdmin0(Base):
+    """Natural Earth default (de facto control) admin-0. PLANNING ONLY: never rendered, never served as a boundary
+    (AGENTS §9). The planner uses it so no route or mission is placed beyond the LoC / LAC (ARCHITECTURE D33)."""
+    __tablename__ = "gis_defacto_admin0"
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    iso3: Mapped[str] = mapped_column(String(3), index=True)
+    name: Mapped[str] = mapped_column(Text)
+    geom = mapped_column(Geometry("MULTIPOLYGON", srid=4326))
 
 
 class CivilAirport(Base):

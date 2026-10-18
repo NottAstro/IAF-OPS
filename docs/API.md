@@ -33,6 +33,12 @@
 - **Indian military aircraft, UAVs and drones barely appear on public ADS-B.** This is why simulated IAF tracks exist (PRD FR-LIVE-07) and why empty toggles say "not broadcast".
 
 ### 1.1 Aircraft enrichment
+
+Selected aircraft also use the authenticated local endpoint `GET /api/v1/live/aircraft/{hex}/trail`.
+It returns up to 120 observed `{lat, lon, alt_m, ts}` positions (UTC epoch seconds), empty if unseen/expired.
+History covers only the time since this server first saw the aircraft and expires with its live track.
+It makes no upstream requests. adsbdb airport coordinates, when present, support a labelled scheduled route;
+that route may differ from actual and is not a filed flight plan. No upstream trace service has been added.
 | Provider | Gives | Endpoint | Key | Limits | Terms | God's Eye | Ours |
 |---|---|---|---|---|---|---|---|
 | **adsbdb** ✔ | Type, registration, operator for a hex; route for a callsign | `https://api.adsbdb.com/v0/aircraft/{hex}` · `https://api.adsbdb.com/v0/callsign/{callsign}` (✔ `AIC101` → Air India route) | none | none published (be gentle) | free; route data from public sources | `server/providers/aircraft/enrichment.js` (24 h disk cache incl. misses) | On track click only; 24 h LRU incl. misses |
@@ -102,6 +108,18 @@ An RTL-SDR dongle plus `readsb`/`dump1090` exposes `http://<pi>/data/aircraft.js
 
 ---
 
+### 6.1 Public-road routing (Infra connectivity focus)
+
+- **Provider:** [Valhalla / FOSSGIS](https://valhalla.openstreetmap.de/), fixed upstream `POST https://valhalla1.openstreetmap.de/route`; verified 2026-10-18 with public Jodhpur and Uttarlai locations. No key or new dependency.
+- **Local API:** authenticated `GET /api/v1/bases/{id}/connections` returns public source identity/coordinates and four nearby public IAF bases, ordered by exact geographic distance. `GET /api/v1/bases/{id}/connections/{destination}` returns an available road geometry/distance/retrieval time or an unavailable message. The destination must be one of that source's four nearby own-force bases. No arbitrary URL or coordinate proxy. No inventory or synthetic site coordinates are sent upstream.
+- **Routing:** auto profile, `shortest=true`, `disable_hierarchy_pruning=true`, OSRM JSON with GeoJSON geometry, no turn-by-turn instructions. [Valhalla documentation](https://valhalla.github.io/valhalla/api/route/api-reference/) states that distance costing alone can be suboptimal under hierarchy pruning, and the disable option is subject to server distance limits. Do not promise a globally optimal or fastest journey.
+- **Limits:** one selected pair on demand; 1.1 s globally between request starts, one active request, identical requests coalesced, 24 h LRU cache of 512 pairs, 60 s backoff on 429; no bulk calculations. Follow the [FOSSGIS fair-use policy](https://routing.openstreetmap.de/about.html): identify the app, at most one request/second, attribution and a Fix the map link, no scraping/heavy use.
+- **Safeguards:** fixed HTTPS host, no redirects, existing verified TLS client, 25 s HTTP/30 s total request timeout, 2 MiB response and 100,000-coordinate cap; reject non-finite/out-of-region geometry. Offline/errors show unavailable, never invented roads. Requests contain public base locations and are subject to provider logging.
+- **Interpretation:** road distance is between snapped network endpoints, not verified base entrances. Draw estimated access connectors separately; direct distances remain geographic proximity, not validated flight routes. No live traffic or travel-time claim.
+- **Attribution/data:** Valhalla / FOSSGIS; OpenStreetMap contributors (ODbL). A recorded response is in `data/fixtures/valhalla_route.json`; tests use fixtures/MockTransport, never live network.
+
+---
+
 ## 7. Libraries and assets (licences)
 
 | Item | Licence | Use |
@@ -160,6 +178,7 @@ These go in the credits panel (FR-MAP-16) and `THIRD_PARTY_NOTICES.md`.
 - "Weather maps: OpenWeatherMap"
 - "Wind: NOAA GFS; ECMWF open data (CC BY 4.0)"
 - "Satellite IR: NOAA nowCOAST"
+- "Road routing: Valhalla / FOSSGIS; data copyright OpenStreetMap contributors (ODbL)"
 - "Map code portions: God's Eye View, © 2026 Bilawal Sidhu (MIT)"
 - "Fonts: B612 (SIL OFL)"
 

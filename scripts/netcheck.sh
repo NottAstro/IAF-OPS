@@ -25,3 +25,4 @@ check "Esri World Imagery"         "https://server.arcgisonline.com/ArcGIS/rest/
 check "OpenFreeMap basemap"        "https://tiles.openfreemap.org/planet"
 check "OpenFreeMap fonts"          "https://tiles.openfreemap.org/fonts/Noto%20Sans%20Regular/0-255.pbf"
 check "AWS terrain (terrarium)"    "https://s3.amazonaws.com/elevation-tiles-prod/terrarium/5/22/13.png"
+check "Valhalla routing status"    "https://valhalla1.openstreetmap.de/status" "(Infra road routing; on demand, cached)"

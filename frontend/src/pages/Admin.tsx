@@ -1,9 +1,57 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useState } from "react";
 import { api, ApiError } from "../api/client";
-import type { Base } from "../api/types";
-import { ErrorText, Pill, Row, Sim } from "../components/ui";
-import { label } from "../lib/format";
+import type { Base, SnagModelCard } from "../api/types";
+import { ErrorText, Pill, Row, Sim, ToneText } from "../components/ui";
+import { istTime, label, num } from "../lib/format";
+
+/** D38: the snag-risk model card (metrics on held-out sorties, coefficients, calibration) and a retrain button. */
+function ModelCard() {
+  const qc = useQueryClient();
+  const card = useQuery({ queryKey: ["model-card"], queryFn: () => api<SnagModelCard>("/ops/models/snag-risk") });
+  const train = useMutation({
+    mutationFn: () => api<SnagModelCard>("/ops/models/snag-risk/train", { method: "POST" }),
+    onSuccess: (c) => { qc.setQueryData(["model-card"], c); qc.invalidateQueries({ queryKey: ["snag-risk"] }); },
+  });
+  const c = card.data, m = c?.metrics;
+  return (
+    <>
+      <h2 className="section-h" style={{ marginTop: 18 }}>Snag-risk model <Sim /></h2>
+      <div className="muted" style={{ marginBottom: 8 }}>
+        Predicts the chance a tail develops a defect on a sortie, from the maintenance log. Used to give priority packages
+        their most reliable tails, in package explanations and in expected-defect forecasts.
+      </div>
+      {card.error && <ErrorText error={card.error} />}
+      {c && !c.trained && <div className="empty">Not trained yet: there isn't enough maintenance history.</div>}
+      {m && <>
+        <Row label="Held-out sorties" value={`${num(m.test.n, 0)} · ${num(m.test.defects, 0)} defects (${num(100 * m.test.base_rate, 1)}%)`}
+          extra={<span className="dim" style={{ fontSize: 11 }}>newest 20 %, from {istTime(m.split.test_from, true)}</span>} />
+        <Row label="Ranking (AUC)" value={num(m.test.auc, 2)} extra={<span className="dim" style={{ fontSize: 11 }}>0.5 = guessing · train {num(m.train.auc, 2)}</span>} />
+        <Row label="Top 10 % riskiest" value={`${num(m.test.top_decile_lift, 1)} × the average defect rate`} />
+        <Row label="Brier score" value={`${num(m.test.brier, 4)}`} extra={<span className="dim" style={{ fontSize: 11 }}>
+          base rate alone {num(m.test.brier_base_rate, 4)} · skill {num(m.test.brier_skill, 2)}</span>} />
+        <h4 className="section-h" style={{ fontSize: 13 }}>Calibration <span className="muted" style={{ fontSize: 11, fontWeight: 400 }}>predicted vs seen, by tenth of risk</span></h4>
+        <div className="table-wrap"><table className="table" style={{ fontSize: 12 }}>
+          <thead><tr><th>Tenth</th><th className="right">Predicted</th><th className="right">Seen</th></tr></thead>
+          <tbody>{m.test.calibration.map((d, i) => (
+            <tr key={i}><td>{i + 1}</td><td className="num">{num(100 * d.predicted, 1)}%</td>
+              <td className="num">{Math.abs(d.observed - d.predicted) > 0.03 ? <ToneText toneName="caution">{`${num(100 * d.observed, 1)}%`}</ToneText> : `${num(100 * d.observed, 1)}%`}</td></tr>
+          ))}</tbody>
+        </table></div>
+        <h4 className="section-h" style={{ fontSize: 13 }}>What drives it <span className="muted" style={{ fontSize: 11, fontWeight: 400 }}>log-odds per unit</span></h4>
+        {Object.entries(m.coefficients).map(([k, v]) => (
+          <Row key={k} label={m.labels[k] ?? label(k)} value={<span className="mono">{v > 0 ? "+" : ""}{num(v, 2)}</span>} />
+        ))}
+        <div className="dim" style={{ fontSize: 11, margin: "6px 0" }}>{c?.method} {c?.limits}</div>
+      </>}
+      <div className="toolbar">
+        <button className="btn" disabled={train.isPending} onClick={() => train.mutate()}>{train.isPending ? "Training…" : "Retrain on the latest log"}</button>
+        {c?.trained_at && <span className="muted" style={{ fontSize: 12 }}>model #{c.id} · trained {istTime(c.trained_at, true)}</span>}
+      </div>
+      {train.error && <ErrorText error={train.error} />}
+    </>
+  );
+}
 
 interface UserRow { id: number; username: string; display_name: string; role: string; is_active: boolean; last_login_at: string | null; base_code: string | null; command_code: string | null }
 
@@ -41,6 +89,7 @@ export function Admin() {
             </button>
           </div>
           {msg && <div className="muted">{msg}</div>}
+          <ModelCard />
         </div>
         <div>
           <h2 className="section-h">Users</h2>

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect } from "react";
+import { type KeyboardEvent as ReactKeyboardEvent, type ReactNode, useEffect, useRef } from "react";
 import { num, tone } from "../lib/format";
 import { useStore } from "../store";
 
@@ -52,9 +52,18 @@ export function Gauge({ value, max, reserve, reorder }: { value: number; max: nu
   );
 }
 
+/** Keyboard activation for a clickable element that isn't a button (Enter or Space, like a button). */
+export const onActivate = (fn: () => void) => (e: ReactKeyboardEvent) => {
+  if (e.key === "Enter" || e.key === " ") {
+    e.preventDefault();
+    fn();
+  }
+};
+
 export function Row({ label, value, extra, onClick }: { label: ReactNode; value?: ReactNode; extra?: ReactNode; onClick?: () => void }) {
   return (
-    <div className={`row${extra === undefined ? " row-2" : ""}${onClick ? " row-click" : ""}`} onClick={onClick}>
+    <div className={`row${extra === undefined ? " row-2" : ""}${onClick ? " row-click" : ""}`} onClick={onClick}
+      {...(onClick ? { role: "button", tabIndex: 0, onKeyDown: onActivate(onClick) } : {})}>
       <span className="row-label">{label}</span>
       {extra !== undefined && <span>{extra}</span>}
       <span className="row-value">{value}</span>
@@ -65,14 +74,29 @@ export function Row({ label, value, extra, onClick }: { label: ReactNode; value?
 export const N = ({ v, d = 0 }: { v: unknown; d?: number }) => <span className="mono">{num(v, d)}</span>;
 
 export function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
+  const box = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const k = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     addEventListener("keydown", k);
     return () => removeEventListener("keydown", k);
   }, [onClose]);
+  useEffect(() => {          // focus moves into the dialog, Tab stays inside it, and returns to the opener on close
+    const opener = document.activeElement as HTMLElement | null;
+    const focusables = () => Array.from(box.current?.querySelectorAll<HTMLElement>(
+      "button, [href], input, select, textarea, [tabindex]:not([tabindex='-1'])") ?? []).filter((x) => !x.hasAttribute("disabled"));
+    (focusables().find((x) => !x.classList.contains("close")) ?? focusables()[0])?.focus();
+    const trap = (e: KeyboardEvent) => {
+      const f = focusables();
+      if (e.key !== "Tab" || !f.length) return;
+      if (e.shiftKey && document.activeElement === f[0]) { e.preventDefault(); f[f.length - 1].focus(); }
+      else if (!e.shiftKey && document.activeElement === f[f.length - 1]) { e.preventDefault(); f[0].focus(); }
+    };
+    addEventListener("keydown", trap);
+    return () => { removeEventListener("keydown", trap); opener?.focus?.(); };
+  }, []);
   return (
     <div className="modal-back" onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="modal" role="dialog" aria-modal="true" aria-label={title}>
+      <div className="modal" role="dialog" aria-modal="true" aria-label={title} ref={box}>
         <div className="card-title" style={{ marginBottom: 12 }}>
           <h2 style={{ fontSize: "var(--t-h2)" }}>{title}</h2>
           <button className="close" onClick={onClose} aria-label="Close">×</button>
@@ -88,9 +112,9 @@ export function Toasts() {
   return (
     <div className="toasts" aria-live="polite">
       {toasts.map((t) => (
-        <div key={t.id} className={`toast${t.severity === "CRITICAL" ? " critical" : ""}`}>
+        <div key={t.id} className={`toast${t.severity === "CRITICAL" ? " critical" : t.severity === "INFO" ? " info" : ""}`}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
-            <span><ToneText toneName={t.severity === "CRITICAL" ? "critical" : "warning"}>{t.text}</ToneText></span>
+            <span><ToneText toneName={t.severity === "CRITICAL" ? "critical" : t.severity === "INFO" ? "info" : "warning"}>{t.text}</ToneText></span>
             <button className="close" aria-label="Dismiss" onClick={() => set({ toasts: toasts.filter((x) => x.id !== t.id) })}>×</button>
           </div>
         </div>

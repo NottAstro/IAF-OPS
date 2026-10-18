@@ -23,6 +23,7 @@ from ..geo import India, bearing, dist_km, load_india, offset
 from ..live import feeds
 from ..weather import metar
 from . import alerts as alert_rules
+from . import reliability as REL
 from .routes import plan, position
 
 from generator import config as GC  # shared synthetic policy (rates, mixes, families)
@@ -87,6 +88,8 @@ class Simulator:
         self.hostile_samples: list = []
         self.lock = asyncio.Lock()
         self.last_tracks: list = []
+        self.force_unknown = False        # exercise inject: spawn an unknown track on the next tick
+        self.route_ver: dict[int, int] = {}
 
     # ------------------------------------------------------------------ loop
     async def run(self) -> None:
@@ -141,6 +144,10 @@ class Simulator:
             self.faults(ctx)
             self.qra(ctx)
             self.unknown_tracks(ctx)
+            from ..decide import exercise          # Phase 2: scenario injects, expiries, KPI samples
+            for msg in exercise.tick(db, ctx.now, self):
+                log.info("exercise: %s", msg)
+                ctx.changed |= {"aircraft", "runway", "fuel_storage", "mission"}
             raised = alert_rules.evaluate(ctx, self.unknowns)
             if st.tick_no % 12 == 0:
                 self.kpis(ctx)
@@ -186,7 +193,7 @@ class Simulator:
                          M.Aircraft.current_base_id == sq.home_base_id, M.Aircraft.status.in_(("AVAILABLE", "STANDBY")))))
             if not fleet:
                 continue
-            n = round(len(fleet) * GC.SORTIE_RATE[fam] * rng.uniform(0.8, 1.2) * remaining)
+            n = round(len(fleet) * GC.SORTIE_RATE[fam] * rng.uniform(0.8, 1.2) * remaining * config.SIM_PROGRAMME_SCALE)
             hp = pt(home.geom)
             for i in range(n):
                 ac = fleet[i % len(fleet)]
@@ -213,7 +220,7 @@ class Simulator:
                 ms = [m for m in missions if m.mission_type == mtype]
                 s = M.Sortie(code=f"SIM-{home.code}-{seq:06d}", origin="SIM_PROGRAMME", mission_type=mtype,
                              priority=rng.choices(["P1", "P2", "P3", "P4"], [5, 20, 50, 25])[0],
-                             mission_id=rng.choice(ms).id if ms and rng.random() < 0.5 else None,
+                             mission_id=None,      # routine flying; operational missions are tasked by the planner
                              departure_base_id=home.id, recovery_base_id=home.id, status="PLANNED",
                              planned_launch_ts=launch, planned_recovery_ts=launch + timedelta(hours=dur),
                              route_geom=from_shape(LineString(pts), srid=4326),
@@ -254,9 +261,12 @@ class Simulator:
             elif s.status == "READY":
                 self.launch(ctx, s)
             elif s.status in ("AIRBORNE", "ON_STATION", "RTB"):
-                dur = (s.planned_recovery_ts - s.planned_launch_ts).total_seconds()
-                frac = (now - s.actual_launch_ts).total_seconds() / max(dur, 60)
-                if s.status != "RTB" and s.cancel_reason is None and rng.random() < 0.01 * ctx.dt_h:  # airborne snag
+                t0 = s.reroute_ts or s.actual_launch_ts            # a re-roled sortie flies its new route from reroute_ts
+                dur = (s.planned_recovery_ts - (s.reroute_ts or s.planned_launch_ts)).total_seconds()
+                frac = (now - t0).total_seconds() / max(dur, 60)
+                hit = self._airborne_defect(ctx, s) if s.status != "RTB" and s.cancel_reason is None else None
+                if hit:                                            # airborne snag (D38 second stage): RTB
+                    self._log_maint(db, hit, "AIRBORNE", now, s, hsm=hit.hours_since_maint + (now - s.actual_launch_ts).total_seconds() / 3600)
                     s.cancel_reason, s.status = "OTHER", "RTB"
                     left = max(0.15, 1 - frac) * dur * 0.3
                     s.planned_recovery_ts = now + timedelta(seconds=left)
@@ -271,7 +281,51 @@ class Simulator:
                 s.status = "COMPLETED"
             ctx.log(s, before, s.departure_base_id)
 
+    @staticmethod
+    def _p_defect(ac: M.Aircraft, t: M.AircraftType, s: M.Sortie, now: datetime, hsm: float | None = None) -> float:
+        """The simulated world's defect law (sim/reliability.py) for this tail on this sortie. Hidden from the planner."""
+        planned_h = (s.planned_recovery_ts - s.planned_launch_ts).total_seconds() / 3600
+        h = ac.hours_since_maint if hsm is None else hsm
+        return REL.p_defect(h / max(1.0, t.maint_interval_h), now.year - (ac.induction_year or now.year - 10) + 0.5,
+                            planned_h, family(t), ac.tail_no)
+
+    @staticmethod
+    def _log_maint(db, ac: M.Aircraft, kind: str, now: datetime, s: M.Sortie | None = None, hsm: float | None = None) -> None:
+        planned_h = (s.planned_recovery_ts - s.planned_launch_ts).total_seconds() / 3600 if s else None
+        db.add(M.MaintenanceEvent(aircraft_id=ac.id, ts=now, kind=kind, sortie_id=s.id if s else None,
+                                  hours_since_maint=round(ac.hours_since_maint if hsm is None else hsm, 1),
+                                  airframe_hours=round(ac.airframe_hours, 1), planned_h=round(planned_h, 2) if planned_h else None))
+
+    @staticmethod
+    def _support(db, s: M.Sortie) -> bool:
+        """A plan tanker sortie (D36): it serves the receivers' mission but isn't the mission itself."""
+        if s.origin != "PLAN" or s.mission_type != "AAR_SUPPORT" or not s.mission_id:
+            return False
+        return db.get(M.Mission, s.mission_id).mission_type != "AAR_SUPPORT"
+
+    def _airborne_defect(self, ctx: Ctx, s: M.Sortie) -> M.Aircraft | None:
+        """The tail that develops a defect this tick, if any: each tail's in-flight share of its defect probability,
+        spread evenly over the planned flight."""
+        db = ctx.db
+        planned_h = max(0.2, (s.planned_recovery_ts - s.planned_launch_ts).total_seconds() / 3600)
+        for sa in db.scalars(select(M.SortieAircraft).where(M.SortieAircraft.sortie_id == s.id)):
+            ac = db.get(M.Aircraft, sa.aircraft_id)
+            t = db.get(M.AircraftType, ac.aircraft_type_id)
+            p = REL.STAGES[1][1] * self._p_defect(ac, t, s, ctx.now, hsm=sa.hsm_at_launch)
+            if ctx.rng.random() < p * ctx.dt_h / planned_h:
+                return ac
+        return None
+
     def _cancel(self, ctx: Ctx, s: M.Sortie, reason: str) -> None:
+        if s.origin == "PLAN" and self._support(ctx.db, s):
+            pass                                  # the receivers' package stays tasked; the monitor re-plans its tanker
+        elif s.origin == "PLAN":
+            from ..services import sorties as SV
+            SV.adjust_stock(ctx.db, s.departure_base_id, SV.sortie_weapons(ctx.db, s), reserve=-1)
+            m = ctx.db.get(M.Mission, s.mission_id) if s.mission_id else None
+            if m and m.status == "TASKED":
+                m.status = "APPROVED"           # the re-tasking monitor picks the gap up
+            ctx.changed |= {"mission", "stock_level"}
         s.status, s.cancel_reason = "CANCELLED", reason
         for c in ctx.db.scalars(select(M.Aircrew).join(M.SortieCrew, M.SortieCrew.aircrew_id == M.Aircrew.id)
                                 .where(M.SortieCrew.sortie_id == s.id, M.Aircrew.duty_status == "BRIEFED")):
@@ -292,6 +346,24 @@ class Simulator:
                 if not swap:
                     return self._cancel(ctx, s, "AIRCRAFT_US")
                 sa.aircraft_id = swap.id
+        for sa in sas:                     # pre-flight inspection (D38): the defect law's first stage
+            ac = db.get(M.Aircraft, sa.aircraft_id)
+            t = db.get(M.AircraftType, ac.aircraft_type_id)
+            if rng.random() >= REL.STAGES[0][1] * self._p_defect(ac, t, s, ctx.now):
+                continue
+            before = snap(ac, "status")
+            self._log_maint(db, ac, "PREFLIGHT", ctx.now, s)
+            ac.status, ac.maint_eta, ac.status_reason = "MAINT_UNSCHEDULED", ctx.now + timedelta(hours=rng.uniform(3, 24)), "Pre-flight defect"
+            ctx.log(ac, before, ac.home_base_id)
+            ctx.changed.add("aircraft")
+            busy = set(db.scalars(select(M.SortieAircraft.aircraft_id).join(M.Sortie, M.Sortie.id == M.SortieAircraft.sortie_id)
+                                  .where(M.Sortie.status.in_(("PLANNED", *M.ACTIVE_SORTIE)), M.Sortie.id != s.id)))
+            swap = db.scalars(select(M.Aircraft).where(M.Aircraft.aircraft_type_id == ac.aircraft_type_id,
+                              M.Aircraft.current_base_id == s.departure_base_id, M.Aircraft.status.in_(("AVAILABLE", "STANDBY")),
+                              M.Aircraft.id.notin_(busy | {x.aircraft_id for x in sas}))).first()
+            if not swap:
+                return self._cancel(ctx, s, "AIRCRAFT_US")
+            sa.aircraft_id = swap.id
         base = db.get(M.AirBase, s.departure_base_id)
         wx = metar.STATE["metars"].get(base.metar_station or "", {})
         if s.mission_type == "TRAINING" and wx.get("flightCategory") in ("IFR", "LIFR"):
@@ -308,7 +380,8 @@ class Simulator:
                 c.duty_status = "BRIEFED"
         else:
             rest_cut = ctx.now - timedelta(hours=10)
-            taken: set[int] = set()
+            taken: set[int] = set(db.scalars(select(M.SortieCrew.aircrew_id).join(M.Sortie, M.Sortie.id == M.SortieCrew.sortie_id)
+                                             .where(M.Sortie.status.in_(("PLANNED", *M.ACTIVE_SORTIE)), M.Sortie.id != s.id)))
             rows = []
             for sa in sas:
                 ac = db.get(M.Aircraft, sa.aircraft_id)
@@ -342,12 +415,18 @@ class Simulator:
     def launch(self, ctx: Ctx, s: M.Sortie) -> None:
         db = ctx.db
         s.status, s.actual_launch_ts = "AIRBORNE", ctx.now
+        if s.mission_id and not self._support(db, s):
+            m = db.get(M.Mission, s.mission_id)
+            if m and m.status in ("TASKED", "APPROVED", "PLANNED"):
+                m.status = "ACTIVE"
+                ctx.changed.add("mission")
         dur = s.planned_recovery_ts - s.planned_launch_ts
         s.planned_recovery_ts = ctx.now + dur
         for sa in db.scalars(select(M.SortieAircraft).where(M.SortieAircraft.sortie_id == s.id)):
             ac = db.get(M.Aircraft, sa.aircraft_id)
             t = db.get(M.AircraftType, ac.aircraft_type_id)
             before = snap(ac, "status", "current_base_id")
+            sa.hsm_at_launch = round(ac.hours_since_maint, 2)
             ac.status, ac.current_base_id, ac.readiness_min = "AIRBORNE", None, None
             ac.fuel_kg = t.max_fuel_kg
             ctx.log(ac, before, ac.home_base_id)
@@ -364,13 +443,19 @@ class Simulator:
         launch_ist = s.actual_launch_ts.astimezone(IST).hour
         night = hours if launch_ist >= 19 or launch_ist < 6 else 0.0
         burn = 0.0
+        bad = set(db.scalars(select(M.MaintenanceEvent.aircraft_id).where(M.MaintenanceEvent.sortie_id == s.id,
+                                                                          M.MaintenanceEvent.kind == "AIRBORNE")))
         for sa in db.scalars(select(M.SortieAircraft).where(M.SortieAircraft.sortie_id == s.id)):
             ac = db.get(M.Aircraft, sa.aircraft_id)
             t = db.get(M.AircraftType, ac.aircraft_type_id)
             before = snap(ac, "status", "current_base_id")
-            ac.status, ac.current_base_id = ("MAINT_UNSCHEDULED" if aborted else "TURNAROUND"), s.recovery_base_id
-            if aborted:
+            snag = aborted and (ac.id in bad or not bad)
+            ac.status, ac.current_base_id = ("MAINT_UNSCHEDULED" if snag else "TURNAROUND"), s.recovery_base_id
+            if snag:
                 ac.maint_eta, ac.status_reason = now + timedelta(hours=ctx.rng.uniform(4, 24)), "Airborne snag (simulated)"
+            elif ctx.rng.random() < REL.STAGES[2][1] * self._p_defect(ac, t, s, now, hsm=sa.hsm_at_launch):
+                self._log_maint(db, ac, "POSTFLIGHT", now, s, hsm=(sa.hsm_at_launch or ac.hours_since_maint) + hours)
+                ac.status_reason = "Post-flight defect"          # rectified when the turnaround ends
             ac.airframe_hours += hours
             ac.hours_since_maint += hours
             ac.last_sortie_at = now
@@ -397,6 +482,37 @@ class Simulator:
         s.fuel_used_kg = round(burn)
         self.routes.pop(s.id, None)
         ctx.changed |= {"aircraft", "aircrew"}
+        if s.origin == "PLAN":
+            self._plan_landed(ctx, s, hours, aborted)
+
+    def _plan_landed(self, ctx: Ctx, s: M.Sortie, hours: float, aborted: bool) -> None:
+        """Phase 2: release / expend the generic weapons and record how much time on station the mission got."""
+        from ..services import sorties as SV
+        db = ctx.db
+        w = SV.sortie_weapons(db, s)
+        if w:
+            if s.mission_type in ("STRIKE_EXERCISE", "CAS_EXERCISE") and not aborted:
+                SV.adjust_stock(db, s.departure_base_id, w, consume=1)
+            else:
+                SV.adjust_stock(db, s.departure_base_id, w, reserve=-1)
+            ctx.changed.add("stock_level")
+        m = db.get(M.Mission, s.mission_id) if s.mission_id and not self._support(db, s) else None
+        if m:
+            t0 = s.reroute_ts or s.actual_launch_ts            # a re-roled sortie's mission starts at the re-role
+            planned_h = max(0.1, (s.planned_recovery_ts - t0).total_seconds() / 3600)
+            flown_h = hours - (t0 - s.actual_launch_ts).total_seconds() / 3600
+            share = 1.0 if not aborted else max(0.0, min(1.0, flown_h / planned_h))
+            m.on_station_achieved_min = round((m.on_station_achieved_min or 0) + m.on_station_min * share, 1)
+            m.outcome = "MET" if m.on_station_achieved_min >= m.on_station_min * 0.95 else "PARTIAL" if m.on_station_achieved_min > 0 else "MISSED"
+            m.status = "COMPLETED"
+            ctx.changed.add("mission")
+            if m.parent_mission_id:               # D42: the split parent completes with its last part
+                kids = list(db.scalars(select(M.Mission).where(M.Mission.parent_mission_id == m.parent_mission_id)))
+                if all(k.status in ("COMPLETED", "CANCELLED") for k in kids):
+                    p = db.get(M.Mission, m.parent_mission_id)
+                    outs = {k.outcome for k in kids}
+                    p.status, p.outcome = "COMPLETED", "MET" if outs == {"MET"} else "MISSED" if outs <= {"MISSED", "NONE"} else "PARTIAL"
+                    p.on_station_achieved_min = round(sum(k.on_station_achieved_min or 0 for k in kids), 1)
 
     # ------------------------------------------------------------------ turnaround + maintenance (FR-SIM-06)
     def aircraft(self, ctx: Ctx) -> None:
@@ -418,9 +534,10 @@ class Simulator:
                                              balance_after_l=atf.current_l, aircraft_id=ac.id, actor="SIMULATOR"))
                     ctx.changed.add("fuel_storage")
             if ac.hours_since_maint >= t.maint_interval_h:
+                self._log_maint(db, ac, "SCHEDULED", now)
                 ac.status, ac.maint_eta, ac.status_reason = "MAINT_SCHEDULED", now + timedelta(hours=rng.uniform(12, 48)), \
                     f"{t.maint_interval_h} h scheduled inspection"
-            elif rng.random() < 0.04:
+            elif ac.status_reason == "Post-flight defect":
                 spare = db.execute(text("""SELECT l.id, l.qty_on_hand FROM stock_level l JOIN stock_item i ON i.id = l.stock_item_id
                     JOIN warehouse w ON w.id = l.warehouse_id WHERE w.base_id = :b AND i.aircraft_type_id = :t
                     ORDER BY random() LIMIT 1"""), {"b": ac.home_base_id, "t": t.id}).first()
@@ -518,11 +635,16 @@ class Simulator:
     def qra(self, ctx: Ctx) -> None:
         db, now = ctx.db, ctx.now
         rest_cut = now - timedelta(hours=10)
+        tasked = select(M.SortieAircraft.aircraft_id).join(M.Sortie, M.Sortie.id == M.SortieAircraft.sortie_id) \
+            .where(M.Sortie.status.in_(("PLANNED", *M.ACTIVE_SORTIE)))
+        tasked_crew = select(M.SortieCrew.aircrew_id).join(M.Sortie, M.Sortie.id == M.SortieCrew.sortie_id) \
+            .where(M.Sortie.status.in_(("PLANNED", *M.ACTIVE_SORTIE)))
         for q in db.scalars(select(M.QraPosture).where(M.QraPosture.active)):
             have = db.scalar(select(func.count()).where(M.Aircraft.current_base_id == q.base_id, M.Aircraft.status == "QRA",
                                                         M.Aircraft.aircraft_type_id == q.aircraft_type_id))
             for ac in db.scalars(select(M.Aircraft).where(M.Aircraft.current_base_id == q.base_id,
-                                 M.Aircraft.aircraft_type_id == q.aircraft_type_id, M.Aircraft.status == "AVAILABLE")
+                                 M.Aircraft.aircraft_type_id == q.aircraft_type_id, M.Aircraft.status == "AVAILABLE",
+                                 M.Aircraft.id.notin_(tasked))
                                  .limit(max(0, q.required_aircraft - have))):
                 before = snap(ac, "status")
                 ac.status, ac.readiness_min = "QRA", q.readiness_min
@@ -533,7 +655,8 @@ class Simulator:
                         M.Aircrew.base_id == q.base_id, M.Aircrew.aircrew_role == "PILOT", M.Aircrew.stream == "FIGHTER",
                         M.Aircrew.duty_status.in_(("ON_DUTY", "STANDBY")), M.Aircrew.medical_status == "FIT_FULL",
                         M.Aircrew.ops_category.in_(("FULLY_OPERATIONAL", "FLIGHT_LEAD")),
-                        or_(M.Aircrew.rest_started_at.is_(None), M.Aircrew.rest_started_at < rest_cut))
+                        or_(M.Aircrew.rest_started_at.is_(None), M.Aircrew.rest_started_at < rest_cut),
+                        M.Aircrew.id.notin_(tasked_crew))
                         .limit(q.required_aircraft - crew)):
                     before = snap(c, "duty_status")
                     c.duty_status = "QRA"
@@ -542,7 +665,8 @@ class Simulator:
     # ------------------------------------------------------------------ simulated unknown tracks + scramble (FR-SIM-07)
     def unknown_tracks(self, ctx: Ctx) -> None:
         db, now, rng = ctx.db, ctx.now, ctx.rng
-        if self.hostile_samples and rng.random() < 0.5 * ctx.dt_h:   # λ = 0.5 per sim hour, theatre-wide
+        forced, self.force_unknown = self.force_unknown, False
+        if self.hostile_samples and (forced or rng.random() < 0.5 * ctx.dt_h):   # λ = 0.5 per sim hour, theatre-wide
             for _ in range(20):
                 bp = rng.choice(self.hostile_samples)
                 out = (bearing((78.9, 22.5), bp))                     # away from India's interior
@@ -643,6 +767,7 @@ class Simulator:
         out = []
         rows = db.execute(text("""
             SELECT s.id, s.code, s.status, s.mission_type, s.actual_launch_ts, s.planned_recovery_ts, s.cruise_alt_m,
+                   s.reroute_ts, s.version,
                    s.origin, s.target_track_id, sa.callsign, sa.formation_pos, a.id AS aircraft_id, a.tail_no,
                    t.name AS type, t.icao_type, t.category, t.cruise_kt, t.burn_kg_per_h, t.max_fuel_kg, b.code AS base,
                    CASE WHEN s.id = ANY(:known) THEN NULL ELSE ST_AsGeoJSON(s.route_geom, 5) END AS route
@@ -653,15 +778,24 @@ class Simulator:
         for r in rows:
             if r["route"]:
                 self.routes[r["id"]] = [tuple(c) for c in json.loads(r["route"])["coordinates"]]
+                self.route_ver[r["id"]] = r["version"]
+            elif self.route_ver.get(r["id"]) != r["version"]:   # re-roled or re-routed since cached
+                g = db.execute(text("SELECT ST_AsGeoJSON(route_geom, 5) FROM sortie WHERE id = :i"), {"i": r["id"]}).scalar()
+                if g:
+                    self.routes[r["id"]] = [tuple(c) for c in json.loads(g)["coordinates"]]
+                self.route_ver[r["id"]] = r["version"]
             pts = self.routes.get(r["id"])
             if not pts:
                 continue
-            dur = (r["planned_recovery_ts"] - r["actual_launch_ts"]).total_seconds()
+            t0 = r["reroute_ts"] or r["actual_launch_ts"]
+            dur = (r["planned_recovery_ts"] - t0).total_seconds()
             el = (ctx.now - r["actual_launch_ts"]).total_seconds()
-            frac = el / max(dur, 60)
+            frac = (ctx.now - t0).total_seconds() / max(dur, 60)
             x, y, hdg = position(pts, frac)
             off = (r["formation_pos"] - 1) * 0.012
             climb = min(1.0, frac / 0.08, (1 - frac) / 0.08) if frac < 1 else 0
+            if r["reroute_ts"]:
+                climb = min(1.0, (1 - frac) / 0.08) if frac < 1 else 0   # already at height when re-roled
             out.append({"track_id": f"SIM-{r['aircraft_id']}", "kind": "SIM_IAF", "simulated": True,
                         "sortie_id": r["id"], "sortie_code": r["code"], "aircraft_id": r["aircraft_id"],
                         "tail_no": r["tail_no"], "callsign": r["callsign"], "type": r["type"], "icao_type": r["icao_type"],

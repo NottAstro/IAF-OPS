@@ -25,6 +25,7 @@ SIM_ENABLED = _env("SIM_ENABLED", "true").lower() == "true"
 SIM_TICK_SECONDS = float(_env("SIM_TICK_SECONDS", "5"))
 SIM_SPEED = float(_env("SIM_SPEED", "10"))
 SIM_ASSERT = _env("SIM_ASSERT", "0") == "1"
+SIM_PROGRAMME_SCALE = float(_env("SIM_PROGRAMME_SCALE", "0.5"))  # routine flying vs. capacity left for planned missions
 ADSB_PROVIDERS = [p.strip() for p in _env("ADSB_PROVIDERS", "adsb.lol,adsb.fi,opensky").split(",") if p.strip()]
 ADSB_MAX_CIRCLES = int(_env("ADSB_MAX_CIRCLES", "4"))
 OPENSKY_CLIENT_ID = _env("OPENSKY_CLIENT_ID")

@@ -18,6 +18,7 @@ from app import config
 from app.geo import dist_km, load_india
 from app.init_db import init_db
 from app.security import hash_password
+from app.sim import reliability as REL
 
 from . import config as C
 
@@ -30,6 +31,8 @@ OPERATIONAL_TABLES = [
     "aircrew_type_hours", "sortie", "mission", "aircraft", "aircrew", "qra_posture", "squadron", "parking_facility",
     "fuel_storage", "runway", "air_defence_battery", "radar_site", "comms_link", "comms_node", "ad_system_type",
     "radar_type", "app_user", "base", "aircraft_type", "command", "alert", "kpi_snapshot", "sim_state", "audit_log",
+    "loadout_config", "type_loadout", "airspace_zone", "threat_zone", "wx_base_forecast", "plan", "plan_item",
+    "plan_unmet", "disruption", "scenario", "exercise_run",
 ]
 
 
@@ -75,10 +78,9 @@ class Writer:
 def main() -> None:
     t0 = datetime.fromisoformat(os.environ["SIM_EPOCH"]) if os.environ.get("SIM_EPOCH") else \
         datetime.now(timezone.utc).replace(second=0, microsecond=0)
-    init_db()
+    init_db(reset=True)   # drop + recreate operational tables so model changes apply (GIS tables are kept)
     conn = psycopg.connect(DSN)
     W = Writer(conn)
-    conn.execute(f"TRUNCATE {', '.join(OPERATIONAL_TABLES)} RESTART IDENTITY CASCADE")
 
     # ------------------------------------------------------------------ geography (from the GIS pipeline)
     G = load_india(conn)
@@ -422,7 +424,7 @@ def main() -> None:
             crew.append(p)
 
     # ------------------------------------------------------------------ 90-day sortie history
-    sorties, s_ac, s_crew = [], [], []
+    sorties, s_ac, s_crew, m_events = [], [], [], []
     rest_until: dict[int, datetime] = {}
     rr = defaultdict(int)
     seq = defaultdict(int)
@@ -440,6 +442,9 @@ def main() -> None:
         cfam = crew_family(t)
         rng = R("history", ac["tail_no"])
         base_id = own[s["base"]]["id"]
+        # maintenance clock through the history (D38): defects come from the simulated world's law (sim/reliability.py)
+        interval, mrng = t["maint_interval_h"], R("maint", ac["tail_no"])
+        hsm, flown, ev0 = mrng.uniform(0, interval), 0.0, len(m_events)
         for day in range(C.HISTORY_DAYS, 0, -1):
             if rng.random() >= C.SORTIE_RATE[fam]:
                 continue
@@ -449,9 +454,22 @@ def main() -> None:
             if launch >= t0 - timedelta(hours=2):
                 continue
             dur = rng.uniform(*C.SORTIE_HOURS[fam])
-            status = pick(rng, [("COMPLETED", 95), ("CANCELLED", 4), ("ABORTED", 1)])
-            if status == "ABORTED":
-                dur *= 0.3
+            if hsm >= interval:                    # inspection fell due after the last sortie
+                m_events.append([None, ac["id"], launch - timedelta(hours=mrng.uniform(12, 36)), "SCHEDULED", None, round(hsm, 1), flown, None])
+                hsm = 0.0
+            p = REL.p_defect(hsm / interval, launch.year - ac["induction_year"] + 0.5, dur, fam, ac["tail_no"])
+            defect = REL.stage(mrng.random()) if mrng.random() < p else None
+            status = pick(rng, [("COMPLETED", 97), ("CANCELLED", 3)])
+            reason = "CREW_UNAVAILABLE" if status == "CANCELLED" else None
+            planned_h, hsm0 = dur, hsm
+            if defect == "PREFLIGHT":
+                status, reason = "CANCELLED", "AIRCRAFT_US"
+            elif defect == "AIRBORNE":
+                status, reason, dur = "ABORTED", "AIRCRAFT_US", dur * 0.3
+            elif defect == "POSTFLIGHT" and status == "CANCELLED":
+                defect = None                      # never flew: nothing to find
+            if status != "CANCELLED":
+                hsm, flown = hsm + dur, flown + dur
             seq[s["base"]] += 1
             sid = W.next_id("sortie")
             mtype = "AAR_SUPPORT" if t["role"] == "TANKER" else "AEW_SUPPORT" if t["role"] == "AEW_C" else pick(rng, C.MISSION_MIX[fam])
@@ -460,10 +478,13 @@ def main() -> None:
                             pick(rng, C.PRIORITY_MIX), base_id, base_id, status, launch,
                             None if status == "CANCELLED" else launch, rec,
                             None if status == "CANCELLED" else rec,
-                            "CREW_UNAVAILABLE" if status == "CANCELLED" else None,
-                            t["burn_kg_per_h"] * dur, 0 if status == "CANCELLED" else t["burn_kg_per_h"] * dur,
+                            reason, t["burn_kg_per_h"] * dur, 0 if status == "CANCELLED" else t["burn_kg_per_h"] * dur,
                             {"fighter": 7000, "transport": 7500, "helo": 1500, "uav": 5000}.get(fam, 3000)))
-            s_ac.append((sid, ac["id"], f"{rng.choice(calls)}{rng.randint(1, 9)}{rng.randint(1, 9)}", 1))
+            s_ac.append((sid, ac["id"], f"{rng.choice(calls)}{rng.randint(1, 9)}{rng.randint(1, 9)}", 1, round(hsm0, 2)))
+            if defect:
+                when = launch - timedelta(minutes=40) if defect == "PREFLIGHT" else launch + timedelta(hours=dur) \
+                    if defect == "AIRBORNE" else launch + timedelta(hours=dur, minutes=30)
+                m_events.append([None, ac["id"], when, defect, sid, round(hsm, 1), flown, round(planned_h, 2)])
             if status == "CANCELLED":
                 continue
             night = dur if hour >= 19 else 0.0
@@ -481,6 +502,12 @@ def main() -> None:
                         p["_last"] = rec if not p["_last"] or rec > p["_last"] else p["_last"]
                         break
             ac["last_sortie_at"] = rec
+        if hsm >= interval:
+            m_events.append([None, ac["id"], t0 - timedelta(hours=mrng.uniform(6, 30)), "SCHEDULED", None, round(hsm, 1), flown, None])
+            hsm = 0.0
+        for e in m_events[ev0:]:                   # airframe hours at each event, counted back from today's total
+            e[6] = round(ac["airframe_hours"] - (flown - e[6]), 1)
+        ac["_hsm"] = round(hsm, 1)
 
     # finish crew rows: hours, categories, quals
     rows = []
@@ -549,7 +576,14 @@ def main() -> None:
     W.copy("sortie", ["id", "code", "origin", "mission_type", "priority", "departure_base_id", "recovery_base_id",
                       "status", "planned_launch_ts", "actual_launch_ts", "planned_recovery_ts", "actual_recovery_ts",
                       "cancel_reason", "fuel_planned_kg", "fuel_used_kg", "cruise_alt_m"], sorties)
-    W.copy("sortie_aircraft", ["sortie_id", "aircraft_id", "callsign", "formation_pos"], s_ac)
+    W.copy("sortie_aircraft", ["sortie_id", "aircraft_id", "callsign", "formation_pos", "hsm_at_launch"], s_ac)
+    for e in m_events:
+        e[0] = W.next_id("maintenance_event")
+    W.copy("maintenance_event", ["id", "aircraft_id", "ts", "kind", "sortie_id", "hours_since_maint", "airframe_hours",
+                                 "planned_h"], m_events)
+    with conn.cursor() as cur:                     # today's maintenance clock is where the history left it
+        cur.executemany("UPDATE aircraft SET hours_since_maint = %s, next_maint_due_hours = airframe_hours - %s + %s WHERE id = %s",
+                        [(a["_hsm"], a["_hsm"], a["_type"]["maint_interval_h"], a["id"]) for a in aircraft if "_hsm" in a])
     W.copy("sortie_crew", ["sortie_id", "aircrew_id", "aircraft_id", "position", "hours_logged", "night_hours"], s_crew)
     conn.execute("UPDATE aircraft a SET last_sortie_at = x.ts FROM (SELECT sa.aircraft_id, max(s.actual_recovery_ts) ts "
                  "FROM sortie_aircraft sa JOIN sortie s ON s.id = sa.sortie_id GROUP BY 1) x WHERE x.aircraft_id = a.id")
@@ -822,18 +856,11 @@ def main() -> None:
                               medium="SATCOM" if own_by_id(own, n["base"])["_lat"] > 32 else "FIBRE", status="UP"))
     W.insert("comms_link", links)
 
-    # ------------------------------------------------------------------ missions (Phase-2-ready, light)
-    rows = []
-    for i, (code, mtype, prio, name) in enumerate([
-            ("WAC", "AIR_DEFENCE_PATROL", "P1", "Northern sector air defence patrol"),
-            ("WAC", "RECCE_ISR", "P2", "Ladakh ISR coverage"), ("SWAC", "AIR_DEFENCE_PATROL", "P2", "Western sector CAP"),
-            ("EAC", "AIR_DEFENCE_PATROL", "P1", "Eastern sector air defence patrol"),
-            ("EAC", "AIRLIFT", "P2", "ALG maintenance airlift, Arunachal"), ("CAC", "AIRLIFT", "P3", "Inter-command logistics"),
-            ("SAC", "RECCE_ISR", "P3", "Maritime ISR support"), ("WAC", "AIRLIFT", "P2", "Ladakh logistics airlift")]):
-        rows.append(dict(id=i + 1, code=f"SIM-MSN-{i + 1:03d}", name=name, mission_type=mtype, priority=prio,
-                         window_start=t0 - timedelta(hours=6), window_end=t0 + timedelta(days=2), status="ACTIVE",
-                         requesting_command_id=cmd_id[code]))
-    W.insert("mission", rows)
+    # ------------------------------------------------------------------ Phase 2: loadouts, zones, missions, forecast, scenarios
+    from . import phase2
+    p2 = phase2.generate(conn, W, t0, G, cmd_id, own, types)
+    print("phase 2: missions %(missions)d | airspace zones %(zones)d | threat bands %(threat_bands)d | "
+          "forecast rows %(wx_rows)d | scenarios %(scenarios)d" % p2)
 
     # ------------------------------------------------------------------ users + sim state
     pw = hash_password(config.DEMO_PASSWORD)
@@ -877,8 +904,9 @@ def checks(conn, types, inner) -> None:
     hits = [n for (n,) in conn.execute("SELECT lower(first_name || ' ' || last_name) FROM aircrew") if n in deny]
     if hits:
         failures.append(f"denylisted names generated: {hits[:5]}")
-    for tbl in ("air_defence_battery", "radar_site", "comms_node"):
-        for (g,) in conn.execute(f"SELECT ST_AsBinary(geom) FROM {tbl}"):
+    for tbl, col in (("air_defence_battery", "geom"), ("radar_site", "geom"), ("comms_node", "geom"),
+                     ("mission", "target_geom"), ("airspace_zone", "geom")):
+        for (g,) in conn.execute(f"SELECT ST_AsBinary({col}) FROM {tbl} WHERE {col} IS NOT NULL"):
             if not inner.contains(wkb.loads(g)):
                 failures.append(f"{tbl}: site outside the India buffer")
                 break
@@ -891,7 +919,8 @@ def checks(conn, types, inner) -> None:
         (SELECT count(*) FROM air_defence_battery), (SELECT count(*) FROM radar_site), (SELECT count(*) FROM comms_node)""").fetchone()
     print("bases %d | squadrons %d | aircraft %d | aircrew %d | sorties %d | AD %d | radars %d | comms %d" % summary)
     parts = []
-    for tbl in ("base", "squadron", "aircraft", "aircrew", "sortie", "sortie_crew", "fuel_storage", "air_defence_battery", "radar_site"):
+    for tbl in ("base", "squadron", "aircraft", "aircrew", "sortie", "sortie_crew", "fuel_storage", "air_defence_battery",
+                "radar_site", "mission", "airspace_zone", "wx_base_forecast"):
         parts.append(conn.execute(f"SELECT md5(string_agg((to_jsonb(t) - 'created_at' - 'updated_at')::text, '|' ORDER BY id)) FROM {tbl} t").fetchone()[0])
     print("checksum", __import__("hashlib").md5("".join(parts).encode()).hexdigest())
     if failures:

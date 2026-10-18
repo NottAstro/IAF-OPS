@@ -24,6 +24,39 @@ export const stationIcon = (color: string, size: number, major: boolean) => `rs|
 export const placeIcon = (color: string, size: number, capital: boolean) => `pd|${color}|${size}|${capital ? 1 : 0}`;
 /** Top-down aircraft glyph, drawn pointing north (rotated on the map). */
 export const glyphIcon = (cls: string, color: string, size: number) => `gl|${cls}|${color}|${size}`;
+export const towerIcon = () => "site|tower";
+export const adIcon = () => "site|ad";
+
+/** Shield/chevron and backed mast glyphs stay distinct from base tags and aircraft. */
+function drawSite(kind: string) {
+  const [c, g] = canvas(24);
+  const color = cssVar(kind === "ad" ? "--sim" : "--map-tower");
+  g.strokeStyle = color;
+  g.fillStyle = cssVar("--bg");
+  g.lineWidth = 1.4;
+  g.lineJoin = "round";
+  g.lineCap = "round";
+  g.beginPath();
+  if (kind === "ad") {
+    g.moveTo(-8, -9); g.lineTo(8, -9); g.lineTo(8, 1);
+    g.quadraticCurveTo(8, 6, 0, 10); g.quadraticCurveTo(-8, 6, -8, 1); g.closePath();
+  } else g.roundRect(-10, -10, 20, 20, 4);
+  g.fill(); g.stroke();
+  g.beginPath();
+  if (kind === "ad") {
+    g.moveTo(-4.5, 1); g.lineTo(0, -4); g.lineTo(4.5, 1);
+    g.moveTo(0, -4); g.lineTo(0, 5);
+  } else {
+    g.moveTo(-4, 7); g.lineTo(0, -5); g.lineTo(4, 7);
+    g.moveTo(-2.5, 3); g.lineTo(2.5, 3);
+    g.moveTo(-5, -5); g.quadraticCurveTo(-8, -2, -5, 0);
+    g.moveTo(5, -5); g.quadraticCurveTo(8, -2, 5, 0);
+    g.moveTo(-3.5, -3.5); g.quadraticCurveTo(-5, -2, -3.5, -0.5);
+    g.moveTo(3.5, -3.5); g.quadraticCurveTo(5, -2, 3.5, -0.5);
+  }
+  g.stroke();
+  return c;
+}
 
 /** Square canvas with the origin at its centre. */
 function canvas(size: number): [HTMLCanvasElement, CanvasRenderingContext2D] {
@@ -239,6 +272,7 @@ export function iconImage(id: string): { data: ImageData; pixelRatio: number } |
     : p[0] === "rs" ? drawStation(p[1], Number(p[2]), p[3] === "1")
     : p[0] === "pd" ? drawPlace(p[1], Number(p[2]), p[3] === "1")
     : p[0] === "gl" ? drawGlyph(p[1], p[2], Number(p[3]))
+    : p[0] === "site" ? drawSite(p[1])
     : null;
   if (!cv) return null;
   return { data: cv.getContext("2d")!.getImageData(0, 0, cv.width, cv.height), pixelRatio: ratio() };

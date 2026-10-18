@@ -16,3 +16,6 @@ data/runtime/
 .gstack/
 data/logs/
 .vite/
+data/dumps/
+data/pipeline.log
+data/screens/

@@ -7,13 +7,18 @@ import { ErrorText, Loading, Modal, Pill, Sim } from "../components/ui";
 import { type ArtRef, EquipmentPicture } from "../equipment/Picture";
 import { AircraftTypeCards, AircraftTypeHeader } from "../features/AircraftTypeCards";
 import { istTime, label, num } from "../lib/format";
+import "./Inventory.css";
 
-const ENTITIES: [string, string][] = [
-  ["aircraft", "Aircraft"], ["aircrew", "Aircrew"], ["sorties", "Sorties"], ["fuel-storage", "Fuel storage"], ["fuel-transactions", "Fuel transactions"],
-  ["ground-assets", "Vehicles & GSE"], ["ground-crew", "Ground crew"], ["warehouses", "Warehouses"], ["stock-levels", "Stock levels"],
-  ["ad-batteries", "AD batteries"], ["radars", "Radars"], ["comms-nodes", "Comms nodes"], ["runways", "Runways"], ["parking", "Parking"],
-  ["qra-posture", "QRA posture"], ["squadrons", "Squadrons"], ["missions", "Missions"], ["bases", "Bases"], ["aircraft-types", "Aircraft types"],
-  ["stock-items", "Stock catalogue"], ["ad-system-types", "AD system types"], ["radar-types", "Radar types"],
+/** Navigation groups only: records keep their existing routes, queries, forms and permissions. */
+const GROUPS: { label: string; entities: [string, string][] }[] = [
+  { label: "Fleet", entities: [["aircraft", "Aircraft"], ["squadrons", "Squadrons"], ["aircraft-types", "Specifications"]] },
+  { label: "Personnel", entities: [["aircrew", "Aircrew"], ["ground-crew", "Ground crew"]] },
+  { label: "Operations", entities: [["missions", "Missions"], ["sorties", "Sorties"], ["qra-posture", "QRA posture"]] },
+  { label: "Logistics & support", entities: [["fuel-storage", "Fuel storage"], ["fuel-transactions", "Fuel activity"],
+    ["ground-assets", "Vehicles & GSE"], ["warehouses", "Warehouses"], ["stock-levels", "Stock levels"], ["stock-items", "Stock catalogue"]] },
+  { label: "Defence & communications", entities: [["ad-batteries", "AD batteries"], ["radars", "Radars"], ["comms-nodes", "Comms nodes"],
+    ["ad-system-types", "AD specifications"], ["radar-types", "Radar specifications"]] },
+  { label: "Bases & infrastructure", entities: [["bases", "Bases"], ["runways", "Runways"], ["parking", "Parking"]] },
 ];
 /** Entities whose rows get a top-view thumbnail, and how to find the type for each row. */
 type Labels = Page<Row>["labels"];
@@ -51,6 +56,7 @@ export function Inventory({ user }: { user: User }) {
   const { entity = "aircraft", typeId: typeParam } = useParams();
   const typeId = entity === "aircraft" ? typeParam : undefined;
   const typeCards = entity === "aircraft" && !typeId; // Aircraft opens on one card per type; a card opens that type's table
+  const group = GROUPS.find((g) => g.entities.some(([id]) => id === entity));
   const nav = useNavigate();
   const qc = useQueryClient();
   const [page, setPage] = useState(1);
@@ -62,7 +68,12 @@ export function Inventory({ user }: { user: User }) {
   const [command, setCommand] = useState("");
   const [typeSearch, setTypeSearch] = useState("");
   const [editing, setEditing] = useState<Row | "new" | null>(null);
-  useEffect(() => { setPage(1); setSearch(""); setStatusFilter(""); }, [typeId]);
+  useEffect(() => { setPage(1); setSearch(""); setStatusFilter(""); setSort("id"); setOrder("asc"); setEditing(null); }, [entity, typeId]);
+  const selectEntity = (next: string) => {
+    if (next === entity && !typeId) return;
+    setPage(1); setSearch(""); setStatusFilter(""); setSort("id"); setOrder("asc"); setEditing(null);
+    nav(`/inventory/${next}`);
+  };
   const meta = useQuery({ queryKey: ["meta", entity], queryFn: () => api<EntityMeta>(`/inv/${entity}/meta`), staleTime: Infinity });
   const bases = useQuery({ queryKey: ["bases"], queryFn: () => api<Base[]>("/bases"), staleTime: Infinity });
   const statusCol = meta.data?.columns.find((c) => STATUS_COLS.includes(c.name) && c.type === "enum");
@@ -97,12 +108,16 @@ export function Inventory({ user }: { user: User }) {
   return (
     <div className="page">
       <h1 className="page-title">Inventory <Sim /></h1>
-      <div className="tabs" role="tablist">
-        {ENTITIES.map(([k, n]) => (
-          <button key={k} role="tab" aria-selected={k === entity} className={`tab${k === entity ? " on" : ""}`}
-            onClick={() => { nav(`/inventory/${k}`); setPage(1); setSort("id"); setStatusFilter(""); }}>{n}</button>
+      <nav className="inventory-groups" aria-label="Inventory categories">
+        {GROUPS.map((g) => (
+          <button key={g.label} className={`inventory-group${g === group ? " on" : ""}`} aria-current={g === group ? "page" : undefined}
+            onClick={() => { if (g !== group) selectEntity(g.entities[0][0]); }}>{g.label}</button>
         ))}
-      </div>
+      </nav>
+      {group && <nav className="tabs inventory-sections" aria-label={`${group.label} records`}>
+        {group.entities.map(([id, name]) => <button key={id} className={`tab${id === entity ? " on" : ""}`}
+          aria-current={id === entity ? "page" : undefined} onClick={() => selectEntity(id)}>{name}</button>)}
+      </nav>}
       {meta.error && <ErrorText error={meta.error} />}
       {meta.data && (
         <>

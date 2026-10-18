@@ -1,13 +1,14 @@
 import { create } from "zustand";
-import type { FeedState, LiveTrack } from "./api/types";
+import type { FeedState, LiveTrack, SimClock, SimTrack } from "./api/types";
 
 /** Map views. Each view shows only its own layers on top of the shared ones (bases, borders, names).
- * Live and Infra show 3D terrain; Weather lays the map flat so clouds and wind read correctly. */
-export type Mode = "LIVE" | "WX" | "INFRA";
+ * Live, Infra and Ops show 3D terrain with the saved tilt; Weather stays flat for clouds and wind. */
+export type Mode = "LIVE" | "WX" | "INFRA" | "OPS";
 export const MODES: { id: Mode; key: string; label: string }[] = [
   { id: "LIVE", key: "Live", label: "Live air traffic" },
   { id: "WX", key: "Wx", label: "Weather" },
   { id: "INFRA", key: "Infra", label: "Infrastructure" },
+  { id: "OPS", key: "Ops", label: "Operations (simulated)" },  // Live stays real data only (D20); simulation lives here (D29)
 ];
 
 export type Selection =
@@ -16,12 +17,16 @@ export type Selection =
   | { kind: "live"; hex: string }
   | { kind: "airport"; id: number }
   | { kind: "tower"; id: number }
+  | { kind: "ad"; id: number }
   | { kind: "station"; id: number }
   | { kind: "wx"; lat: number; lon: number }
+  | { kind: "mission"; id: number }
+  | { kind: "simtrack"; id: string }
+  | { kind: "route"; id: number }
   | null;
 
 /** `mode` set → the layer belongs to that view only; unset → shared by every view. */
-export const LAYER_GROUPS = ["Infrastructure", "Terrain", "Base map", "Air bases", "Boundaries & names"] as const;
+export const LAYER_GROUPS = ["Operations", "Infrastructure", "View", "Air bases", "Boundaries & names"] as const;
 export const LAYERS = {
   highways: { group: "Infrastructure", label: "National highways", on: true, mode: "INFRA" },
   roads: { group: "Infrastructure", label: "Main roads", on: true, mode: "INFRA" },
@@ -29,8 +34,18 @@ export const LAYERS = {
   stations: { group: "Infrastructure", label: "Railway stations", on: true, mode: "INFRA" },
   "civil-airports": { group: "Infrastructure", label: "Civil airports", on: true, mode: "INFRA" },
   towers: { group: "Infrastructure", label: "Telecom towers", on: false, mode: "INFRA" },
-  relief: { group: "Terrain", label: "Elevation colours", on: true },
-  satellite: { group: "Base map", label: "Satellite imagery", on: false },
+  "ops-sim": { group: "Operations", label: "Simulated IAF sorties", on: true, mode: "OPS" },
+  "ops-unknown": { group: "Operations", label: "Simulated unknown tracks", on: true, mode: "OPS" },
+  "ops-routes": { group: "Operations", label: "Planned routes", on: true, mode: "OPS" },
+  "ops-missions": { group: "Operations", label: "Mission areas, next 24 h", on: true, mode: "OPS" },
+  "ops-threat": { group: "Operations", label: "Threat zones (generic)", on: true, mode: "OPS" },
+  "ops-airspace": { group: "Operations", label: "Training areas, ranges, restricted", on: false, mode: "OPS" },
+  "ops-radar": { group: "Operations", label: "Radar coverage", on: false, mode: "OPS" },
+  "ops-ad": { group: "Operations", label: "Air defence coverage", on: false, mode: "OPS" },
+  "ops-ad-sites": { group: "Operations", label: "Air defence sites (simulated)", on: true, mode: "OPS" },
+  "ops-wx": { group: "Operations", label: "Weather impact, next 6 h", on: true, mode: "OPS" },
+  relief: { group: "View", label: "Elevation colours", on: true },
+  satellite: { group: "View", label: "Satellite imagery", on: false },
   "iaf-bases": { group: "Air bases", label: "IAF air bases", on: true },
   algs: { group: "Air bases", label: "Advanced landing grounds", on: true },
   "other-mil": { group: "Air bases", label: "Navy, Army & Coast Guard air stations", on: true },
@@ -54,6 +69,13 @@ export const LIVE_GROUP: Record<LiveTrack["category"], LiveCat> = {
 export const WX_LAYERS = ["clouds", "rain", "wind", "metar"] as const;
 export type WxLayer = (typeof WX_LAYERS)[number];
 
+/** A mission request being written while the user picks its area on the map (Missions → map → Missions). */
+export interface MissionDraft {
+  name: string; mission_type: string; priority: string; window_start: string; window_end: string; target: string;
+  target_base_id: string; lon: string; lat: string; required_aircraft: string; on_station_min: string; max_risk: string;
+  min_quals: string[]; notes: string;
+}
+
 interface Toast {
   id: number;
   text: string;
@@ -71,10 +93,16 @@ interface State {
   panelTab: string;
   liveTracks: LiveTrack[];
   feeds: Record<string, FeedState>;
+  simTracks: SimTrack[];
+  simClock: SimClock | null;
+  missionDraft: MissionDraft | null;
+  picking: "mission" | null;
   toasts: Toast[];
   camera: { lat: number; lon: number; zoom: number; bbox: [number, number, number, number] } | null;
   cursor: { lat: number; lon: number; elev?: number | null } | null;
   exaggeration: number;
+  tilt: boolean;
+  connectivityFocus: { sourceId: number; destinationId: number | null; mode: "direct" | "road"; fitSeq: number } | null;
   flyTo: { lat: number; lon: number; zoom: number; seq: number } | null;
   set: (p: Partial<State>) => void;
   toggleLayer: (id: LayerId) => void;
@@ -84,11 +112,14 @@ interface State {
   requestFly: (lat: number, lon: number, zoom?: number) => void;
 }
 
-/** Saved toggles, restricted to keys that still exist (old saves may hold retired layers). */
+/** Saved preferences, restricted to current keys and valid types (old saves may hold retired layers). */
 function saved<T extends object>(key: string, fallback: T): T {
   try {
-    const v = JSON.parse(localStorage.getItem(key) ?? "{}");
-    return Object.fromEntries(Object.entries(fallback).map(([k, d]) => [k, typeof v[k] === "boolean" ? v[k] : d])) as T;
+    const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? "{}");
+    const v = parsed != null && typeof parsed === "object" ? parsed as Record<string, unknown> : {};
+    return Object.fromEntries(Object.entries(fallback).map(([k, d]) => [k,
+      typeof v[k] === typeof d && (typeof d !== "number" || (typeof v[k] === "number" && Number.isFinite(v[k]) && v[k] >= 1 && v[k] <= 3)) ? v[k] : d,
+    ])) as T;
   } catch {
     return fallback;
   }
@@ -113,15 +144,29 @@ export const useStore = create<State>((set, get) => ({
   overlayOpacity: 0.85,
   windModel: "gfs",
   selection: null,
+  connectivityFocus: null,
   panelTab: "Ov",
   liveTracks: [],
   feeds: {},
+  simTracks: [],
+  simClock: null,
+  missionDraft: null,
+  picking: null,
   toasts: [],
   camera: null,
   cursor: null,
-  exaggeration: 1.5,
+  ...saved("airops.view.v1", { tilt: true, exaggeration: 1.5 }),
   flyTo: null,
-  set: (p) => set(p),
+  set: (p) => {
+    const next = { ...get(), ...p };
+    if (next.connectivityFocus && (next.mode !== "INFRA" || next.selection?.kind !== "base" || next.selection.id !== next.connectivityFocus.sourceId)) {
+      p = { ...p, connectivityFocus: null };
+    }
+    if (p.tilt !== undefined || p.exaggeration !== undefined) {
+      persist("airops.view.v1", { tilt: p.tilt ?? get().tilt, exaggeration: p.exaggeration ?? get().exaggeration });
+    }
+    set(p);
+  },
   toggleLayer: (id) => {
     const layers = { ...get().layers, [id]: !get().layers[id] };
     persist("airops.layers.v3", layers);

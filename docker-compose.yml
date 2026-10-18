@@ -1,0 +1,68 @@
+# Development (ARCHITECTURE D32): only PostGIS runs in Docker; API, web and wind run natively (scripts/dev.ps1, make dev).
+#   docker compose up -d db
+# Everything in containers (D47): database, API (first start: schema, GIS pipeline, seed), web on http://localhost:8080.
+#   docker compose --profile full up -d --build
+services:
+  db:
+    image: postgis/postgis:17-3.5
+    container_name: iaf-airops-db
+    environment:
+      POSTGRES_USER: airops
+      POSTGRES_PASSWORD: airops
+      POSTGRES_DB: airops
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./data/dumps:/dumps
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airops -d airops"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
+  api:
+    profiles: [full]
+    build: {context: ., dockerfile: deploy/api.Dockerfile}
+    container_name: iaf-airops-api
+    depends_on: {db: {condition: service_healthy}}
+    environment:
+      DATABASE_URL: postgresql+psycopg://airops:airops@db:5432/airops
+      JWT_SECRET: ${JWT_SECRET:-change-me-in-production}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-Vayu@2026}
+      SIM_ENABLED: ${SIM_ENABLED:-true}
+      SIM_SPEED: ${SIM_SPEED:-10}
+      OFFLINE_MODE: ${OFFLINE_MODE:-false}
+      CORS_ORIGINS: http://localhost:8080
+      WIND_URL: http://wind:8787
+      OWM_API_KEY: ${OWM_API_KEY:-}
+      OPENAIP_API_KEY: ${OPENAIP_API_KEY:-}
+    volumes:
+      - gisraw:/app/data/raw
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8010/api/v1/healthz')\" || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 60
+      start_period: 30s
+    restart: unless-stopped
+
+  web:
+    profiles: [full]
+    build: {context: ., dockerfile: deploy/web.Dockerfile}
+    container_name: iaf-airops-web
+    depends_on: [api]
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+
+  wind:
+    profiles: [full]
+    build: {context: ., dockerfile: deploy/wind.Dockerfile}
+    container_name: iaf-airops-wind
+    restart: unless-stopped
+
+volumes:
+  pgdata:
+  gisraw:

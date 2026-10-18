@@ -3,7 +3,7 @@ import { Fragment, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { AlertItem, Page, User } from "../api/types";
-import { ErrorText, Loading, Pill, Sim } from "../components/ui";
+import { ErrorText, Loading, Pill, Sim, onActivate } from "../components/ui";
 import { istTime, label, num } from "../lib/format";
 import { useStore } from "../store";
 
@@ -74,7 +74,8 @@ export function Audit({ user }: { user: User }) {
           <option value="">Everyone</option><option value="USER">People</option><option value="SIMULATOR">Simulator</option>
         </select>
         <select className="select" value={f.action} onChange={(e) => { setF({ ...f, action: e.target.value }); setPage(1); }} aria-label="Action">
-          <option value="">Any action</option>{["CREATE", "UPDATE", "DELETE", "RETIRE", "LOGIN", "LOGIN_FAILED", "ALERT_ACK", "SIM_CONTROL", "USER_ADMIN", "SIM_TRANSITION"].map((a) => <option key={a} value={a}>{label(a)}</option>)}
+          <option value="">Any action</option>{["CREATE", "UPDATE", "DELETE", "RETIRE", "APPROVE", "PLAN_GENERATE", "PLAN_APPROVE", "PLAN_COMMIT", "PLAN_REJECT", "PLAN_OVERRIDE", "INJECT",
+            "LOGIN", "LOGIN_FAILED", "ALERT_ACK", "SIM_CONTROL", "USER_ADMIN", "SIM_TRANSITION"].map((a) => <option key={a} value={a}>{label(a)}</option>)}
         </select>
         <input className="input" placeholder="Entity (e.g. aircraft)" value={f.entity} onChange={(e) => { setF({ ...f, entity: e.target.value }); setPage(1); }} />
       </div>
@@ -84,7 +85,8 @@ export function Audit({ user }: { user: User }) {
           <thead><tr><th>Time</th><th>Actor</th><th>Action</th><th>Entity</th><th>Base</th><th>Change</th></tr></thead>
           <tbody>{q.data?.items.map((r) => (
             <Fragment key={r.id}>
-              <tr onClick={() => setOpen(open === r.id ? null : r.id)} style={{ cursor: "pointer" }}>
+              <tr onClick={() => setOpen(open === r.id ? null : r.id)} style={{ cursor: "pointer" }} tabIndex={0} aria-expanded={open === r.id}
+                onKeyDown={onActivate(() => setOpen(open === r.id ? null : r.id))}>
                 <td className="mono">{istTime(r.ts, true)}</td>
                 <td>{r.actor_type === "SIMULATOR" ? <span className="sim-badge">SIMULATOR</span> : `${r.actor_name ?? "?"} (${label(r.actor_role)})`}</td>
                 <td>{label(r.action)}</td><td>{r.entity_type ?? "—"} {r.entity_id && <span className="mono dim">#{r.entity_id}</span>}</td>

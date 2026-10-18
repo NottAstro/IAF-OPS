@@ -44,7 +44,7 @@ Phase 1 is a single place where planners can see the real-time state of air powe
    - command overview, inventory, pilot and alert screens
 4. **A live tick simulator.** It makes the picture move: sorties launch and recover, fuel burns, crews rotate, aircraft go in and out of maintenance.
 
-> Phase 2 (decision support built on this data) is out of scope for this document set.
+> Phase 2 (decision support built on this data) is specified in §17 and built per [PHASE2_IMPLEMENTATION_PLAN](PHASE2_IMPLEMENTATION_PLAN.md).
 
 ### 1.3 Why this matters to judges
 Phase 1 fuses six of the seven data categories in the problem statement into one view (mapping in §12). It also produces the clean, structured, live data foundation any later decision-support layer needs.
@@ -76,7 +76,7 @@ Phase 1 fuses six of the seven data categories in the problem statement into one
 - **Live tick simulator** pushing updates over WebSocket.
 
 ### 2.2 Out of scope (Phase 1)
-- Any decision-support, scoring, ranking, recommendation or predictive logic.
+- ~~Any decision-support, scoring, ranking, recommendation or predictive logic.~~ In scope since Phase 2 (§17). Overview screens stay values-only.
 - Real, classified or operational data; integration with any real IAF/MoD system.
 - Inventory for foreign forces. Neighbour bases show public information only.
 - Weapon loadouts and store-compatibility rules. Phase 1 holds generic armament stock only.
@@ -239,6 +239,7 @@ Priority: **M** = must, **S** = should, **C** = could. Entities are defined in [
 | FR-MAP-14 | M | Neighbour air bases use APP-6 **hostile** frames for Pakistan and China and **neutral** frames for other countries. Their cards show public information only, with the note "Public information only — no inventory held". |
 | FR-MAP-15 | M | Navy, Army Aviation and Coast Guard air stations appear as "Other Indian military" markers with a public-info card and no inventory. |
 | FR-MAP-16 | M | A credits panel lists every data source, licence and attribution string ([API §10](API.md#10-attribution-strings)). |
+| FR-MAP-17 | S | Infra has a temporary Connectivity focus toggle for a selected IAF base. It hides unrelated layers and inventory, lays the map flat, and shows the source and four nearby public IAF bases, ordered by direct distance. Selecting a destination keeps the source selected; Direct shows geographic arcs, while Shortest road route requests a distance-based public-road estimate on demand. Fit connections frames the endpoints. Both normal and satellite backgrounds support focus; the existing saved Satellite imagery preference remains editable without clearing connections. Exit, changing view, clearing/changing the source, or leaving the map restores ordinary layers and the saved tilt without rewriting preferences. Road-network endpoints are distinguished from unverified base-access connectors; failures never invent a road route. |
 
 ### FR-LIVE: live air picture
 
@@ -252,7 +253,7 @@ Priority: **M** = must, **S** = should, **C** = could. Entities are defined in [
 | FR-LIVE-06 | M | Staleness: tracks fade at 60 s and are removed at 120 s. Feed chip shows LIVE / STALE / OFF per provider. |
 | FR-LIVE-07 | M | Simulated IAF tracks arrive over WebSocket. They use the APP-6 exercise-friend symbol and a SIM tag. Clicking one opens its sortie, aircraft and crew. |
 | FR-LIVE-08 | M | Simulated unknown tracks use the APP-6 exercise-unknown symbol and a SIM tag. They approach no closer than the configured border buffer and never cross into Indian territory. |
-| FR-LIVE-09 | S | Track trails (last N positions), toggleable. |
+| FR-LIVE-09 | S | Implemented for selected live aircraft: last 120 observed positions per hex, retained in memory since the server first saw the aircraft and expired with the track. A solid trail joins the last recorded position to the dead-reckoned icon. Selection highlights the icon; clearing selection, changing view, leaving the map or losing the track removes the path. Where adsbdb supplies both airport coordinates, a distinct dashed great-circle leg to the scheduled destination is labelled as schedule data that may differ from actual. No upstream history or filed flight plan is implied. |
 | FR-LIVE-10 | M | API keys and credentials live on the server only. Provider order and poll intervals are configurable. |
 | FR-LIVE-11 | C | Record ADS-B snapshots to disk and replay them, for unreliable networks. |
 
@@ -308,7 +309,7 @@ The full field list, mapped to your element list, is in §8.
 
 | ID | P | Requirement |
 |---|---|---|
-| FR-INV-01 | M | One table per entity: aircraft, aircrew, ground crew strength, ground assets, fuel storage, fuel transactions, warehouses and stock, AD batteries, radars, comms nodes, runways, parking, squadrons, sorties, missions. Server-side paging, sort, filter (base, command, type, status) and search. |
+| FR-INV-01 | M | One table per entity: aircraft, aircrew, ground crew strength, ground assets, fuel storage, fuel transactions, warehouses and stock, AD batteries, radars, comms nodes, runways, parking, squadrons, sorties, missions. Server-side paging, sort, filter (base, command, type, status) and search. Navigation groups these tables into Fleet, Personnel, Operations, Logistics & support, Defence & communications, and Bases & infrastructure; only the active category's sections are shown. Existing entity URLs and permissions remain unchanged. |
 | FR-INV-02 | M | Create and edit forms with server validation messages. Site entities get a map point-picker. |
 | FR-INV-03 | M | Delete asks for confirmation. If other records reference the item, delete is blocked and **Retire** is offered instead. |
 | FR-INV-04 | M | Role scoping per §4.2, enforced server-side. |
@@ -469,11 +470,11 @@ Your required elements, mapped to where each is shown and the entity it comes fr
 |---|---|
 | Aircraft availability | Aircraft status, serviceability %, standby/QRA, parking occupancy, maintenance due |
 | Crew status | Aircrew duty/medical/currency/fatigue, duty roster, ground-crew strength |
-| Weapon loads | **Partial**: generic armament stock by category in base warehouses; no per-aircraft loadouts |
+| Weapon loads | Generic loadouts per aircraft (category counts), reserved from base stock when a plan is committed (Phase 2, D30) |
 | Airspace | Live ADS-B picture, civil airports, radar and SAM coverage rings, region lock |
 | Weather | METAR/TAF, point forecast, OWM overlays, GFS/IFS wind, IR clouds, below-minima alerts |
 | Threats | Neighbour air bases (hostile/neutral symbology), live military ADS-B, simulated unknown tracks and QRA response, own AD/radar coverage |
-| Mission priorities | `mission.priority` P1–P4 and sortie mission types, displayed and filterable |
+| Mission priorities | Mission requests P1–P4 with windows, areas and requirements; the planner covers them lexicographically by priority (Phase 2) |
 
 ---
 
@@ -567,3 +568,86 @@ Your required elements, mapped to where each is shown and the entity it comes fr
 | S / U/S | Serviceable / unserviceable |
 | SIDC | Symbol identification code (APP-6 / 2525) |
 | WAC, SWAC, CAC, EAC, SAC | Western, South Western, Central, Eastern, Southern Air Command |
+
+---
+
+## 17. Phase 2: decision support (SIH26250 "dynamic air operations and resource optimisation")
+Design and rationale: [PHASE2_IMPLEMENTATION_PLAN](PHASE2_IMPLEMENTATION_PLAN.md). Decision records: ARCHITECTURE D28–D47.
+Measured results: [BENCHMARK](BENCHMARK.md), [MODEL_CARD_SNAG_RISK](MODEL_CARD_SNAG_RISK.md).
+Everything is advisory: a person approves every change, and every approval is audited.
+
+### FR-MSN: missions
+| ID | P | Requirement |
+|---|---|---|
+| FR-MSN-01 | M | Missions carry type, priority P1–P4, time window, target area (inside India, clear of the border buffer and on the Indian-administered side of the LoC / LAC) or destination base, aircraft required, time on station, eligible roles, optional loadout, crew qualifications and the highest acceptable route risk. |
+| FR-MSN-02 | M | Command HQ requests missions for its command; Air HQ and the directing staff create approved missions; Air HQ approves requests. Cancel cancels any planned sortie. Audited. |
+| FR-MSN-03 | M | The generator creates two days of realistic mission requests per operational command (CAP, ISR, AEW&C, AAR, airlift, HADR, casualty evacuation, strike and CAS exercises, training). |
+| FR-MSN-04 | S | A mission's area can be picked on the map. |
+| FR-MSN-05 | C | Public airspace (prohibited, restricted, danger areas and civil terminal airspace) can be imported from OpenAIP next to the synthetic zones; prohibited areas are never routed through (D44). |
+| FR-MSN-06 | S | A mission can depend on another (an AEW&C orbit) being on station for its whole time on station (D41). |
+
+### FR-PLN: planning
+| ID | P | Requirement |
+|---|---|---|
+| FR-PLN-01 | M | Generate a plan for the next 24 h (theatre, or one command) that assigns base, aircraft type, tails, crew and a generic loadout to each mission. |
+| FR-PLN-02 | M | Hard rules: aircraft serviceable and not QRA (the QRA posture is kept), hours to inspection, crew current on type, medically fit, rested (10 h after recovery), qualified (night / NVG / mountain / formation lead) and instrument-rated for the forecast weather; range and endurance; weather minima at launch and recovery; runway open; route clear of the border buffer and of restricted airspace; route risk within the mission's limit; weapons and fuel above reserve; airspace capacity. |
+| FR-PLN-03 | M | Lexicographic objective: maximise P1 coverage, then P2, P3, P4; then the chosen preset (balanced, max coverage, min risk, min fuel). |
+| FR-PLN-04 | M | An independent validator re-checks every plan before it is proposed and before it is committed. |
+| FR-PLN-05 | M | Commit creates, keeps, swaps, moves or cancels sorties to match the plan, reserves weapons, and is audited. Packages whose tails or crew went unavailable since the plan was made are repaired at commit or skipped with a reason. |
+| FR-PLN-06 | M | Base commanders can swap tails or crew inside their own base's package; the swap is re-validated. |
+| FR-PLN-07 | M | Theatre plan for the seeded day in < 10 s on the reference laptop; same snapshot and seed give the same plan. |
+| FR-PLN-08 | S | Air-to-air refuelling: a package that can't reach or hold without fuel gets a tanker leg (tanker base, rendezvous, crew, fuel) when its type and mission allow it; receiver crews must be AAR-qualified; the tanker becomes its own sortie at commit (D36). |
+| FR-PLN-09 | M | Launch rate: no more than 8 aircraft launch from one open runway in a 15-minute slot (D36). |
+| FR-PLN-10 | S | P1/P2 packages are given the free tails least likely to develop a defect (snag-risk model, FR-FCT-03); the risk per tail and per package is shown (D38). |
+| FR-PLN-12 | S | Split missions: a mission no single package can fly is offered a checked split, as reliefs in time (continuous cover, 15 min handovers) or as parts from different bases on station together; applying it is a human action; parts are covered all or nothing (D42). |
+| FR-PLN-13 | M | Manual planning baseline: a timed manual session on the same snapshot, judged by the same rules, stored beside the optimiser's result and reported in the benchmark (PS-8, D43). |
+| FR-PLN-14 | M | Air tasking order: a printable order (and CSV) for a plan, theatre-wide or per base, one briefing entry per package (callsigns, tails, crew, times, waypoints, loadout, tanker meeting point, notes); DRAFT until committed (D46). |
+| FR-PLN-15 | S | Packages bigger than a base's launch rate take off in up to three waves and join up (D45). |
+| FR-PLN-11 | S | Civil traffic: routes through busy civil airspace (airport terminal areas, live ADS-B density for near-term launches) cost more, so quieter options win when otherwise close; the explanation names the busy spot (D39). |
+
+### FR-RTK: dynamic re-tasking
+| ID | P | Requirement |
+|---|---|---|
+| FR-RTK-01 | M | The committed plan is re-checked against live (simulated) data every 12 s. A broken rule becomes a deduplicated disruption, whatever caused it (simulator, human edit, weather, exercise inject, new mission). |
+| FR-RTK-02 | M | A re-task proposal is ready in ≤ 15 s (target; measured < 1 s): local tail/crew swap first, then a partial re-solve of the affected missions, then a full re-solve with a stability bonus for committed slots. |
+| FR-RTK-03 | M | The proposal shows each package as kept, swapped, moved, new, dropped or diverted, with the reason. Air HQ commits or rejects it. |
+| FR-RTK-04 | S | An airborne package whose recovery base becomes unusable gets a divert recommendation (runway open, weather within the crew's minima, inside fuel range). |
+| FR-RTK-05 | S | In-flight re-role: an urgent P1/P2 mission the ground can't cover in time is offered to an airborne package on a lower-priority mission with the right role and load that can reach it, hold and recover with reserve fuel; commit re-tasks the sortie in place and releases its old mission (D37). |
+| FR-RTK-06 | S | A re-roled or diverted package's knock-on effects (later packages on the same tails or crew) are repaired in the same proposal. |
+
+### FR-XPL: explanations
+| ID | P | Requirement |
+|---|---|---|
+| FR-XPL-01 | M | Each package explains itself: transit, weather at launch and recovery, route risk, night and qualification needs, fuel and weapons impact, binding constraints, and the top alternatives with why they lost. |
+| FR-XPL-03 | S | Package explanations also show the tanker leg, the predicted snag risk (worst tail, package, main drivers) and civil traffic along the route. |
+| FR-XPL-02 | M | Each uncovered mission lists its reasons, nearest base first (e.g. "can't reach the area inside the time window", "resources taken by P1 CAP-WAC-003"), and checked fixes ("move the window 60 min later", "+2 Su-30MKI at Halwara", "accept risk HIGH"). |
+
+### FR-FCT, FR-WIF: forecasts, what-if and COA comparison
+| ID | P | Requirement |
+|---|---|---|
+| FR-FCT-01 | M | 72 h outlook per base: aircraft free by type (maintenance returns, planned sorties × each tail's predicted defect risk), pilots free, ATF level and reserve breach, weather by hour. Shown in the base panel. |
+| FR-FCT-03 | S | Snag-risk model trained on the maintenance log only (never the simulator's law), with held-out metrics (AUC, Brier, calibration, lift), a model card, and a retrain action for Air HQ; the base panel lists its riskiest serviceable tails (D38). |
+| FR-FCT-02 | M | Base weather for planning: Open-Meteo hourly where reachable, synthetic otherwise, exercise overrides on top. |
+| FR-WIF-01 | M | What-if: ground aircraft of a type, close a runway, weather front, threat zone, mission surge, fuel shortfall, base attack; re-plan on a copy and compare with the baseline. Nothing is written. |
+| FR-WIF-02 | M | COA comparison: the same picture planned with two or three presets side by side. |
+
+### FR-EXR: exercise mode (directing staff)
+| ID | P | Requirement |
+|---|---|---|
+| FR-EXR-01 | M | Start / stop an exercise from a scenario (timed injects) or free play; pause, step and speed (×1, ×10, ×60). |
+| FR-EXR-02 | M | Live injects: runway closed, weather front, threat zone, aircraft grounding, pop-up mission, fuel delay, radar down, unknown track. Scripted injects can target "AUTO" (the busiest tasked base). |
+| FR-EXR-03 | M | After-action report: injects, disruptions with proposal time and decision time, plans and approvals, mission outcomes (met / partial / missed), KPI samples; CSV with the SIMULATED header and a print view. |
+| FR-EXR-04 | M | The Ops map view shows simulated sorties flying their routes, unknown tracks, planned and proposed routes, mission areas, generic threat zones, airspace, radar / AD coverage and weather impact. |
+
+### Phase 2 demo questions (each < 30 s)
+1. "Plan the next 24 hours: is every P1 covered?"
+2. "Why was this base chosen for CAP-WAC-003, and what lost?"
+3. "Which missions are uncovered and what would fix them?"
+4. "A runway just closed: what changes?" (exercise inject → proposal → commit)
+5. "What if 20 Su-30MKI are grounded tomorrow?" (what-if)
+6. "A P1 pop-up 20 minutes away: can anyone already airborne take it?" (in-flight re-role → commit)
+7. "Which of my tails are most likely to go unserviceable, and did the P1 packages get the reliable ones?" (base panel snag risk, package explanation)
+8. "Nobody can hold a 6-hour CAP: what now?" (uncovered → "Split into 2 reliefs" → apply → re-plan)
+9. "How much faster is this than planning by hand?" (Planner → Manual baseline, then BENCHMARK.md)
+10. "Give Halwara its orders for tomorrow." (Planner → Air tasking order → base VIHX → Print)
+

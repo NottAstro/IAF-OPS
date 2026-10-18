@@ -6,8 +6,25 @@ from sqlalchemy.orm import Session
 from ..auth import current_user
 from ..db import get_db
 from ..weather import metar as metar_mod
+from ..services import connectivity as connections
 
 router = APIRouter(tags=["bases"])
+
+
+@router.get("/bases/{base_id}/connections")
+def base_connections(base_id: int, user: dict = Depends(current_user), db: Session = Depends(get_db)):
+    result = connections.nearby_connections(db, base_id)
+    if result is None:
+        raise HTTPException(404, "Select an existing IAF base.")
+    return result
+
+
+@router.get("/bases/{base_id}/connections/{destination_id}")
+async def base_connection(base_id: int, destination_id: int, user: dict = Depends(current_user), db: Session = Depends(get_db)):
+    result = await connections.connection(db, base_id, destination_id)
+    if result is None:
+        raise HTTPException(404, "Select an existing nearby IAF base.")
+    return result
 
 
 def rows(db: Session, sql: str, **params) -> list[dict]:
@@ -167,8 +184,7 @@ def connectivity(db: Session, base_id: int) -> dict:
         "airports": q(cols="x.name, x.icao, x.iata, x.type", src="civil_airport",
                       where="x.type IN ('large_airport', 'medium_airport')", k=8, n=3),
         "highways": roads,
-        "bases": q(cols="x.id, x.code, x.name", src="base",
-                   where="x.side = 'OWN' AND x.base_type <> 'ALG' AND x.id <> :id", k=8, n=4),
+        "bases": connections.nearby_bases(db, base_id),
     }
 
 

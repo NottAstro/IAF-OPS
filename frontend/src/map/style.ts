@@ -2,10 +2,10 @@
 // OpenFreeMap (OpenMapTiles schema) supplies terrain features only: land cover, water, roads, rail, runways.
 // Its `boundary`, `place`, `poi` and other label layers are deliberately NOT used (AGENTS.md §9): every boundary
 // and name comes from our own GoI-compliant vector tiles (/api/v1/gis/tiles).
-import type { ExpressionSpecification, LayerSpecification, SourceSpecification, StyleSpecification } from "maplibre-gl";
+import type { ExpressionSpecification, GeoJSONSourceSpecification, LayerSpecification, StyleSpecification } from "maplibre-gl";
 import type { LayerId } from "../store";
 import { cssVar } from "./colors";
-import { airportBlock, placeIcon, stationIcon } from "./symbols";
+import { adIcon, airportBlock, placeIcon, stationIcon, towerIcon } from "./symbols";
 
 /** Camera limits: India fills the frame; panning stops short of Central Asia (no Tajikistan / Russia). */
 export const REGION_BOUNDS: [[number, number], [number, number]] = [[50, 1], [115, 39.5]];
@@ -39,10 +39,21 @@ export const LAYER_IDS: Record<LayerId, string[]> = {
   states: ["adm1", "lbl-state"],
   districts: ["adm2", "lbl-district"],
   places: ["lbl-place"],
+  "ops-sim": ["ops-sim", "ops-sim-label"],
+  "ops-unknown": ["ops-unk", "ops-unk-label"],
+  "ops-routes": ["ops-routes", "ops-routes-proposed", "ops-routes-support"],
+  "ops-missions": ["ops-missions", "ops-missions-label"],
+  "ops-threat": ["ops-threat-fill", "ops-threat-line"],
+  "ops-airspace": ["ops-air-line", "ops-air-label"],
+  "ops-radar": ["ops-radar"],
+  "ops-ad": ["ops-ad-fill", "ops-ad"],
+  "ops-ad-sites": ["ops-ad-sites"],
+  "ops-wx": ["ops-wx", "ops-wx-label"],
 };
 
 /** Clickable layers, top-most first. */
-export const INTERACTIVE = ["live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
+export const INTERACTIVE = ["connectivity-bases", "ops-unk", "ops-sim", "ops-missions", "ops-routes", "ops-ad-sites", "live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
+export const CONNECTIVITY_LAYERS = ["connectivity-direct", "connectivity-direct-label", "connectivity-road-glow", "connectivity-road", "connectivity-access", "connectivity-halo", "connectivity-bases"];
 /** Weather rasters go under the boundaries, so borders and names stay readable through the clouds. */
 export const OVERLAY_BEFORE = "adm2";
 /** Base-connection spotlight layers (Infrastructure view). */
@@ -52,7 +63,7 @@ export function buildStyle(): StyleSpecification {
   const origin = location.origin;
   const bg = cssVar("--bg");
   const halo = cssVar("--bg", 0.85);
-  const emptyFc = (): SourceSpecification => ({ type: "geojson", data: { type: "FeatureCollection", features: [] } });
+  const emptyFc = (): GeoJSONSourceSpecification => ({ type: "geojson", data: { type: "FeatureCollection", features: [] } });
   const linkColor = x(["match", ["get", "kind"], "rail", cssVar("--map-rail-main"), "air", cssVar("--map-label"), cssVar("--accent")]);
   const station = cssVar("--map-station");
   // compact block (glyph cell) far out, full tag with the code from `fullAt`; the name appears under it close in
@@ -121,8 +132,9 @@ export function buildStyle(): StyleSpecification {
       { "line-color": cssVar("--map-rail-main"), "line-width": zoomLin(4.5, 0.8, 9, 2, 13, 3.2), "line-opacity": 0.9 }),
     infraLine("rail-ties", ["all", ["==", ["get", "class"], "rail"], ["!", ["has", "service"]]], 9, { "line-cap": "butt" },
       { "line-color": bg, "line-width": zoomLin(7, 0.6, 13, 1.4), "line-dasharray": [2, 2] }),
-    { id: "towers", type: "circle", source: "ours", "source-layer": "tower", minzoom: 9, layout: { visibility: "none" },
-      paint: { "circle-radius": 2.4, "circle-color": cssVar("--neutral"), "circle-opacity": 0.8 } },
+    { id: "towers", type: "symbol", source: "ours", "source-layer": "tower", minzoom: 9,
+      layout: { visibility: "none", "icon-image": towerIcon(), "icon-size": zoomLin(9, 0.85, 12, 0.95, 15, 1),
+        "icon-allow-overlap": false, "icon-padding": 2 } },
     { id: "stations", type: "symbol", source: "ours", "source-layer": "station", layout: {
         visibility: "none",
         "icon-image": x(["case", ["==", ["get", "rank"], 0], stationIcon(station, 10, true), stationIcon(station, 7, false)]),
@@ -215,12 +227,86 @@ export function buildStyle(): StyleSpecification {
         "text-offset": [0, 1.1], "text-anchor": "top", "text-optional": true,
       },
       paint: { "text-color": ["get", "color"], "text-halo-color": halo, "text-halo-width": 1.2 } },
+    // operations view (Phase 2, simulated): zones and coverage under the bases, tracks above them
+    { id: "ops-threat-fill", type: "fill", source: "ops-zones", filter: ["==", ["get", "layer"], "threat"], layout: { visibility: "none" },
+      paint: { "fill-color": cssVar("--base-hostile"), "fill-opacity": x(["*", 0.14, ["get", "risk"]]) } },
+    { id: "ops-threat-line", type: "line", source: "ops-zones", filter: ["==", ["get", "layer"], "threat"], layout: { visibility: "none" },
+      paint: { "line-color": cssVar("--base-hostile"), "line-width": 1.2, "line-opacity": 0.75, "line-dasharray": [3, 2] } },
+    { id: "ops-air-line", type: "line", source: "ops-zones", filter: ["==", ["get", "layer"], "airspace"], layout: { visibility: "none" },
+      paint: { "line-color": x(["match", ["get", "kind"], "DANGER", cssVar("--caution"), "RESTRICTED", cssVar("--warning"), cssVar("--line")]),
+        "line-width": 1, "line-dasharray": [2, 2], "line-opacity": 0.85 } },
+    { id: "ops-air-label", type: "symbol", source: "ops-zones", minzoom: 6.5, filter: ["==", ["get", "layer"], "airspace"],
+      layout: { visibility: "none", "text-field": ["get", "name"], "text-font": REG, "text-size": 9.5, "symbol-placement": "point" },
+      paint: { "text-color": cssVar("--text-2"), "text-halo-color": halo, "text-halo-width": 1 } },
+    { id: "ops-radar", type: "line", source: "ops-rings", filter: ["==", ["get", "layer"], "radar"], layout: { visibility: "none" },
+      paint: { "line-color": cssVar("--info"), "line-width": 0.9, "line-opacity": x(["case", ["get", "ok"], 0.55, 0.25]), "line-dasharray": [1, 2] } },
+    { id: "ops-ad-fill", type: "fill", source: "ops-rings", filter: ["==", ["get", "layer"], "ad"], layout: { visibility: "none" },
+      paint: { "fill-color": cssVar("--accent"), "fill-opacity": x(["case", ["get", "ok"], 0.06, 0.02]) } },
+    { id: "ops-ad", type: "line", source: "ops-rings", filter: ["==", ["get", "layer"], "ad"], layout: { visibility: "none" },
+      paint: { "line-color": cssVar("--accent"), "line-width": 0.9, "line-opacity": x(["case", ["get", "ok"], 0.6, 0.25]), "line-dasharray": [4, 2] } },
+    { id: "ops-routes-support", type: "line", source: "ops-routes", filter: ["get", "support"], layout: { visibility: "none", "line-cap": "round" },
+      paint: { "line-color": cssVar("--sim"), "line-width": zoomLin(4, 1, 8, 1.8), "line-dasharray": [0.6, 1.8], "line-opacity": 0.75 } },
+    { id: "ops-routes", type: "line", source: "ops-routes", filter: ["all", ["!", ["get", "proposed"]], ["!", ["get", "support"]]],
+      layout: { visibility: "none", "line-cap": "round" },
+      paint: { "line-color": cssVar("--sim"), "line-width": zoomLin(4, 1.2, 8, 2.2), "line-opacity": 0.8 } },
+    { id: "ops-routes-proposed", type: "line", source: "ops-routes", filter: ["all", ["get", "proposed"], ["!", ["get", "support"]]], layout: { visibility: "none" },
+      paint: { "line-color": cssVar("--sim"), "line-width": zoomLin(4, 1.4, 8, 2.4), "line-dasharray": [2, 1.5], "line-opacity": 0.95 } },
+    { id: "ops-wx", type: "circle", source: "ops-wx", layout: { visibility: "none" },
+      paint: { "circle-radius": zoomLin(4, 11, 8, 18), "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": ["get", "color"],
+        "circle-stroke-width": 2, "circle-stroke-opacity": 0.9 } },
+    { id: "ops-wx-label", type: "symbol", source: "ops-wx", minzoom: 5, layout: {
+        visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 9.5, "text-offset": [0, -2.1], "text-optional": true },
+      paint: { "text-color": ["get", "color"], "text-halo-color": halo, "text-halo-width": 1.2 } },
+    { id: "ops-missions", type: "circle", source: "ops-missions", layout: { visibility: "none" },
+      paint: { "circle-radius": zoomLin(4, 4, 8, 7), "circle-color": ["get", "color"], "circle-stroke-color": bg, "circle-stroke-width": 1.5 } },
+    { id: "ops-missions-label", type: "symbol", source: "ops-missions", minzoom: 5.5, layout: {
+        visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 9.5, "text-offset": [0, 1.1], "text-anchor": "top",
+        "text-optional": true },
+      paint: { "text-color": ["get", "color"], "text-halo-color": halo, "text-halo-width": 1.2 } },
+    { id: "ops-ad-sites", type: "symbol", source: "ops-ad-sites",
+      layout: { visibility: "none", "icon-image": adIcon(), "icon-size": zoomLin(3.5, 0.85, 9, 1.1),
+        "icon-allow-overlap": false, "icon-padding": 2,
+        "text-field": ["step", ["zoom"], "SIM", 7, ["concat", ["get", "code"], " SIM"]], "text-font": BOLD,
+        "text-size": 9, "text-offset": [0, 1.5], "text-anchor": "top", "text-optional": false },
+      paint: { "text-color": cssVar("--sim"), "text-halo-color": halo, "text-halo-width": 1.5 } },
+    // Observed trail and scheduled airport leg only; never derived from a heading.
+    { id: "live-trail", type: "line", source: "live-path", filter: ["==", ["get", "kind"], "trail"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": cssVar("--map-trail"), "line-width": 2.2 } },
+    { id: "live-schedule", type: "line", source: "live-path", filter: ["==", ["get", "kind"], "schedule"],
+      layout: { "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": cssVar("--map-schedule"), "line-width": 1.8, "line-dasharray": [3, 3] } },
+    { id: "live-schedule-label", type: "symbol", source: "live-path", filter: ["==", ["get", "kind"], "schedule"],
+      layout: { "symbol-placement": "line-center", "text-field": "Scheduled route (adsbdb, may differ from actual)",
+        "text-font": REG, "text-size": 10, "text-keep-upright": true },
+      paint: { "text-color": cssVar("--map-schedule"), "text-halo-color": halo, "text-halo-width": 1.5 } },
+    // Infra focus: only public identities and measured/estimated connections, with no inventory gauges.
+    { id: "connectivity-direct", type: "line", source: "connectivity", filter: ["==", ["get", "role"], "direct"], layout: { visibility: "none" },
+      paint: { "line-color": cssVar("--accent-strong"), "line-width": ["case", ["get", "active"], 2.5, 1.4], "line-opacity": ["get", "opacity"], "line-dasharray": [2, 2] } },
+    { id: "connectivity-direct-label", type: "symbol", source: "connectivity", filter: ["==", ["get", "role"], "direct"],
+      layout: { visibility: "none", "symbol-placement": "line-center", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 11 },
+      paint: { "text-color": cssVar("--accent-strong"), "text-halo-color": halo, "text-halo-width": 2, "text-opacity": ["get", "opacity"] } },
+    { id: "connectivity-road-glow", type: "line", source: "connectivity", filter: ["==", ["get", "role"], "road"], layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": cssVar("--map-schedule"), "line-width": 9, "line-blur": 4, "line-opacity": 0.3 } },
+    { id: "connectivity-road", type: "line", source: "connectivity", filter: ["==", ["get", "role"], "road"], layout: { visibility: "none", "line-cap": "round", "line-join": "round" },
+      paint: { "line-color": cssVar("--map-schedule"), "line-width": 3.5 } },
+    { id: "connectivity-access", type: "line", source: "connectivity", filter: ["==", ["get", "role"], "access"], layout: { visibility: "none" },
+      paint: { "line-color": cssVar("--neutral"), "line-width": 1.6, "line-dasharray": [1, 2] } },
+    { id: "connectivity-halo", type: "circle", source: "connectivity", filter: ["all", ["==", ["get", "role"], "base"], ["get", "active"]], layout: { visibility: "none" },
+      paint: { "circle-radius": 22, "circle-color": cssVar("--accent", 0.12), "circle-stroke-color": cssVar("--accent-strong"), "circle-stroke-width": 2 } },
+    { id: "connectivity-bases", type: "symbol", source: "connectivity", filter: ["==", ["get", "role"], "base"],
+      layout: { visibility: "none", "icon-image": ["get", "icon"], "icon-allow-overlap": true, "icon-ignore-placement": true,
+        "text-field": ["get", "name"], "text-font": BOLD, "text-size": 11, "text-offset": [0, 2], "text-anchor": "top", "text-max-width": 9, "text-optional": true },
+      paint: { "text-color": cssVar("--text-1"), "text-halo-color": halo, "text-halo-width": 2 } },
     // bases: badges carry their own serviceability gauge, alert dot and QRA chip; IAF on top, never hidden
     baseSymbol("bases-alg", "alg", false, 5.5, 8),
     baseSymbol("bases-foreign", "foreign", false, 3.5, 6.5),
     baseSymbol("bases-mil", "mil", false, 4.5, 6.5),
     baseSymbol("bases-iaf", "iaf", true, 0, 5.5),
     // live air picture
+    { id: "live-selected", type: "circle", source: "live-selection",
+      paint: { "circle-radius": zoomLin(3, 11, 9, 17), "circle-color": cssVar("--map-trail", 0.12),
+        "circle-stroke-color": cssVar("--map-trail"), "circle-stroke-width": 2 } },
     { id: "live-air", type: "symbol", source: "live",
       layout: {
         "icon-image": ["get", "icon"], "icon-rotate": ["get", "rot"], "icon-rotation-alignment": "map",
@@ -230,6 +316,16 @@ export function buildStyle(): StyleSpecification {
     { id: "live-label", type: "symbol", source: "live", minzoom: 7.5,
       layout: { "text-field": ["get", "label"], "text-font": REG, "text-size": 9.5, "text-offset": [0, 1.2], "text-anchor": "top", "text-optional": true },
       paint: { "text-color": cssVar("--text-2"), "text-halo-color": halo, "text-halo-width": 1 } },
+    // simulated tracks (Ops view only; never mixed with the real ADS-B layer, ARCHITECTURE §6.6)
+    ...(["ops-sim", "ops-unk"] as const).flatMap((id): LayerSpecification[] => [
+      { id, type: "symbol", source: "ops-sim", filter: ["==", ["get", "kind"], id === "ops-sim" ? "SIM_IAF" : "SIM_UNKNOWN"],
+        layout: { visibility: "none", "icon-image": ["get", "icon"], "icon-rotate": ["get", "rot"], "icon-rotation-alignment": "map",
+          "icon-size": zoomLin(3, 0.7, 6, 0.9, 9, 1.15), "icon-allow-overlap": true, "icon-ignore-placement": true } },
+      { id: `${id}-label`, type: "symbol", source: "ops-sim", minzoom: 6.5, filter: ["==", ["get", "kind"], id === "ops-sim" ? "SIM_IAF" : "SIM_UNKNOWN"],
+        layout: { visibility: "none", "text-field": ["get", "label"], "text-font": REG, "text-size": 9.5, "text-offset": [0, 1.25], "text-anchor": "top",
+          "text-optional": true },
+        paint: { "text-color": id === "ops-sim" ? cssVar("--sim") : cssVar("--warning"), "text-halo-color": halo, "text-halo-width": 1 } },
+    ]),
   ];
 
   const terrarium = ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"];
@@ -254,8 +350,18 @@ export function buildStyle(): StyleSpecification {
       },
       bases: emptyFc(),
       live: emptyFc(),
+      "live-path": emptyFc(),
+      "live-selection": emptyFc(),
       metar: emptyFc(),
       focus: emptyFc(),
+      connectivity: { ...emptyFc(), attribution: 'Road routes: Valhalla / FOSSGIS · © OpenStreetMap contributors' },
+      "ops-zones": emptyFc(),
+      "ops-rings": emptyFc(),
+      "ops-ad-sites": emptyFc(),
+      "ops-routes": emptyFc(),
+      "ops-missions": emptyFc(),
+      "ops-sim": emptyFc(),
+      "ops-wx": emptyFc(),
     },
     layers,
   };
