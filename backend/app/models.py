@@ -297,6 +297,8 @@ class Mission(Common, Base):
     part_no: Mapped[int | None] = mapped_column(Integer)
     parts: Mapped[int | None] = mapped_column(Integer)
     split_kind: Mapped[str | None] = mapped_column(String(8))
+    # D56: the scenario run that demanded this mission (its tag); NULL = routine tasking
+    exercise_run_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
 
 
 class Sortie(Common, Base):
@@ -722,6 +724,7 @@ class Disruption(Base):
     proposal_ms: Mapped[int | None] = mapped_column(Integer)
     resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())  # wall clock
+    exercise_run_id: Mapped[int | None] = mapped_column(BigInteger, index=True)  # the live scenario that caused it, if any
     is_simulated: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
@@ -769,18 +772,34 @@ class ManualSession(Base):
     is_simulated: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true")
 
 
+SCENARIO_CATEGORY = ("ACCIDENT", "INFRASTRUCTURE", "URGENT_TASKING", "WEATHER", "LOGISTICS", "EQUIPMENT", "SURVEILLANCE",
+                     "HOSTILE_ACTION")
+INTENSITY = ("LOW", "MEDIUM", "HIGH", "SEVERE")
+
+
 class Scenario(Base):
+    """A scenario is one incident (D55): starting it applies all its effects at once. `injects` hold `{param}`
+    placeholders filled from `params` (the Scenarios page form) and `intensity_presets`."""
     __tablename__ = "scenario"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    code: Mapped[str | None] = mapped_column(String(32), unique=True)
     name: Mapped[str] = mapped_column(Text, unique=True)
+    category: Mapped[str | None] = mapped_column(E(*SCENARIO_CATEGORY))
+    intensity: Mapped[str] = mapped_column(E(*INTENSITY), default="MEDIUM")
+    summary: Mapped[str | None] = mapped_column(Text)                 # card one-liner
     description: Mapped[str | None] = mapped_column(Text)
+    lead: Mapped[str | None] = mapped_column(Text)                    # the Planner's one sentence, a template over params
     speed: Mapped[float] = mapped_column(Float, default=60)
     injects: Mapped[list] = mapped_column(JSONB)                     # [{offset_min, kind, params, label}]
+    params: Mapped[list] = mapped_column(JSONB, default=list)        # [{key, label, kind: base|type|choice|text, options, default}]
+    intensity_presets: Mapped[dict] = mapped_column(JSONB, default=dict)   # intensity -> {param: value}
     created_by: Mapped[int | None] = mapped_column(BigInteger)
+    version: Mapped[int] = mapped_column(Integer, default=1)
     is_simulated: Mapped[bool] = mapped_column(Boolean, default=True)
 
 
 class ExerciseRun(Base):
+    """One run of a scenario. Several may be RUNNING at once, at most one per scenario (schema.sql)."""
     __tablename__ = "exercise_run"
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
     scenario_id: Mapped[int | None] = mapped_column(BigInteger)
@@ -789,9 +808,35 @@ class ExerciseRun(Base):
     started_real: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     started_sim: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     ended_sim: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    intensity: Mapped[str | None] = mapped_column(E(*INTENSITY))
+    params: Mapped[dict] = mapped_column(JSONB, default=dict)         # resolved form values
+    footprint: Mapped[dict] = mapped_column(JSONB, default=dict)      # what its effects touched: bases, aircraft, missions...
     injects: Mapped[list] = mapped_column(JSONB, default=list)       # scenario injects + live ones, with applied_at
     kpi_timeline: Mapped[list] = mapped_column(JSONB, default=list)  # [{sim_ts, metric: value...}]
     started_by: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class InventoryTransfer(Common, Base):
+    """D56: a move of fuel, weapons or spares between two bases, recommended by decide/logistics.py and approved by a
+    person. The donor is debited on approval; the simulator credits the receiver at the ETA (services/transfers.py)."""
+    __tablename__ = "inventory_transfer"
+    kind: Mapped[str] = mapped_column(E("FUEL", "STOCK"))
+    category: Mapped[str] = mapped_column(Text)                      # ATF, or a stock_item category
+    qty: Mapped[float] = mapped_column(Float)
+    unit: Mapped[str] = mapped_column(E("L", "EA", "KG", "ROUNDS"))
+    from_base_id: Mapped[int] = fk("base")
+    to_base_id: Mapped[int] = fk("base")
+    distance_km: Mapped[float] = mapped_column(Float)
+    depart_ts: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    eta: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
+    needed_by: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    status: Mapped[str] = mapped_column(E("IN_TRANSIT", "DELIVERED", "CANCELLED"), default="IN_TRANSIT", index=True)
+    reason: Mapped[str | None] = mapped_column(Text)
+    lines: Mapped[list | None] = mapped_column(JSONB)                 # STOCK: [{stock_item_id, qty}] taken from the donor
+    plan_id: Mapped[int | None] = mapped_column(BigInteger)
+    exercise_run_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
+    created_by: Mapped[int | None] = mapped_column(BigInteger)
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 # ---------------------------------------------------------------- H. static GIS (pipeline-owned)

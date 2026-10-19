@@ -1,5 +1,5 @@
 // Missions (PHASE2_IMPLEMENTATION_PLAN §10.3): the tasking list the planner works from. Requests, approval, tasking
-// status and outcome. All missions are simulated; every area is inside India and clear of the border buffer.
+// status and outcome. Each mission is tagged Routine or with the scenario that demanded it (D56). All missions are simulated; every area is inside India and clear of the border buffer.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -25,7 +25,7 @@ export function Missions({ user }: { user: User }) {
   const draft = useStore((s) => s.missionDraft);
   const [params] = useSearchParams();
   const focus = Number(params.get("focus")) || null;
-  const [f, setF] = useState({ status: "", priority: "", command: "", mission_type: "", q: "", horizon_h: "24" });
+  const [f, setF] = useState({ status: "", priority: "", command: "", mission_type: "", q: "", horizon_h: "24", tag: "" });
   const p = new URLSearchParams(Object.entries(f).filter(([, v]) => v));
   const q = useQuery({ queryKey: ["missions", p.toString()], queryFn: () => api<{ items: MissionRow[]; counts: Record<string, number>; now: string }>(`/ops/missions?${p}`),
     refetchInterval: 20000 });
@@ -47,6 +47,9 @@ export function Missions({ user }: { user: User }) {
         <select className="select" aria-label="Window" value={f.horizon_h} onChange={(e) => setF({ ...f, horizon_h: e.target.value })}>
           <option value="24">Next 24 h</option><option value="48">Next 48 h</option><option value="">All</option>
         </select>
+        <select className="select" aria-label="Tag" value={f.tag} onChange={(e) => setF({ ...f, tag: e.target.value })}>
+          <option value="">Routine and scenario</option><option value="routine">Routine only</option><option value="scenario">Scenario only</option>
+        </select>
         <select className="select" aria-label="Status" value={f.status} onChange={(e) => setF({ ...f, status: e.target.value })}>
           <option value="">Any status</option>{["REQUESTED", "APPROVED", "TASKED", "ACTIVE", "COMPLETED", "CANCELLED"].map((s) => <option key={s} value={s}>{label(s)}</option>)}
         </select>
@@ -66,9 +69,10 @@ export function Missions({ user }: { user: User }) {
       {q.error && <ErrorText error={q.error} />}
       <div className="table-wrap">
         <table className="table">
-          <thead><tr><th>Pri.</th><th>Mission</th><th>Type</th><th>Window (IST)</th><th>Cmd</th><th className="right">Needs</th><th>Status</th><th>Tasked</th><th>Outcome</th><th /></tr></thead>
+          <thead><tr><th>Tag</th><th>Pri.</th><th>Mission</th><th>Type</th><th>Window (IST)</th><th>Cmd</th><th className="right">Needs</th><th>Status</th><th>Tasked</th><th>Outcome</th><th /></tr></thead>
           <tbody>{rows.map((m) => (
             <tr key={m.id} className={focus === m.id ? "sel" : ""}>
+              <td><span className={`tag${m.exercise_run_id ? " scn" : ""}`}>{m.tag}</span></td>
               <td><PrioPill p={m.priority} /></td>
               <td style={{ maxWidth: 300 }}><span className="mono">{m.code}</span> <span className="muted">{m.name}</span>
                 {m.depends_on && <div className="dim" style={{ fontSize: 11 }}>needs <span className="mono">{m.depends_on}</span> on station</div>}

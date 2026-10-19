@@ -360,6 +360,14 @@ def build(db: Session, horizon_h: float = D.HORIZON_H, now: datetime | None = No
                   JOIN stock_item i ON i.id = l.stock_item_id JOIN warehouse w ON w.id = l.warehouse_id
                   WHERE i.category LIKE 'ARMAMENT%' AND w.status <> 'CLOSED' GROUP BY 1, 2"""):
         stock.setdefault(r["base_id"], {})[r["category"]] = max(0.0, float(r["qty"]))
+    # D56: approved transfers on their way in count as arriving. ponytail: the arrival time inside the horizon is not
+    # modelled (fuel and weapons are horizon totals here, D40); the upgrade is a time-indexed stock timeline.
+    for r in q("""SELECT to_base_id b, kind, category c, sum(qty) qty FROM inventory_transfer WHERE status = 'IN_TRANSIT'
+                  AND eta < :e GROUP BY 1, 2, 3""", e=end):
+        if r["kind"] == "FUEL" and r["b"] in fuel:
+            fuel[r["b"]]["current_l"] += float(r["qty"])
+        elif r["c"].startswith("ARMAMENT"):
+            stock.setdefault(r["b"], {})[r["c"]] = stock.get(r["b"], {}).get(r["c"], 0.0) + float(r["qty"])
     if release:   # weapons reserved for packages being re-planned are available to the re-plan again
         for r in q("""SELECT s.departure_base_id AS b, l.items, count(sa.id) AS n FROM sortie s
                       JOIN loadout_config l ON l.code = s.loadout_code JOIN sortie_aircraft sa ON sa.sortie_id = s.id

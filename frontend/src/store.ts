@@ -44,6 +44,8 @@ export const LAYERS = {
   "ops-ad": { group: "Operations", label: "Air defence coverage", on: false, mode: "OPS" },
   "ops-ad-sites": { group: "Operations", label: "Air defence sites (simulated)", on: true, mode: "OPS" },
   "ops-wx": { group: "Operations", label: "Weather impact, next 6 h", on: true, mode: "OPS" },
+  "ops-scenarios": { group: "Operations", label: "Scenario effects", on: true, mode: "OPS" },          // D56
+  "ops-transfers": { group: "Operations", label: "Inventory transfers", on: true, mode: "OPS" },       // D56
   relief: { group: "View", label: "Elevation colours", on: true },
   satellite: { group: "View", label: "Satellite imagery", on: false },
   "iaf-bases": { group: "Air bases", label: "IAF air bases", on: true },

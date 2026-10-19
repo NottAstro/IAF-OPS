@@ -175,6 +175,7 @@ export interface MissionRow {
   depends_on_id: number | null; depends_on: string | null;                                       // D41
   parent_mission_id: number | null; parent_code: string | null; part_no: number | null; parts: number | null;
   split_kind: "RELIEF" | "BASES" | null;                                                          // D42
+  exercise_run_id: number | null; tag: string;                                                    // D56: Routine or the scenario's name
 }
 
 export interface Reason { code: string; text: string; count: number; examples: string[]; nearest_km?: number }
@@ -184,6 +185,7 @@ export interface ExplRow { label: string; value: string; note?: string; tone?: s
 export interface PlanMission {
   id: number; code: string; name: string; mission_type: string; priority: Priority; status: string; window_start: string;
   window_end: string; required_aircraft: number; on_station_min: number; max_risk: string; command: string | null; lon: number; lat: number;
+  exercise_run_id: number | null; tag: string;   // D56: the scenario that demanded it, or "Routine"
 }
 
 export interface PlanItemView {
@@ -243,7 +245,8 @@ export interface PlanKpis {
 export interface PlanView {
   plan: { id: number; kind: "PLAN" | "RETASK" | "WHATIF"; status: string; scope: string; preset: string; version: number; created_at: string;
     horizon_start: string; horizon_end: string; solver_status: string | null; solve_ms: number | null; kpis: PlanKpis; summary: string | null;
-    parent_plan_id: number | null; approved_by: number | null; approved_at: string | null; committed_at: string | null; simulated: boolean };
+    parent_plan_id: number | null; approved_by: number | null; approved_at: string | null; committed_at: string | null; simulated: boolean;
+    why: string };
   items: PlanItemView[];
   unmet: { id: number; mission: PlanMission; reasons: Reason[]; fixes: Fix[]; dropped_item_id: number | null }[];
 }
@@ -251,7 +254,7 @@ export interface PlanView {
 export interface PlanListRow {
   id: number; kind: string; status: string; scope: string; preset: string; created_at: string; committed_at: string | null;
   solve_ms: number | null; kpis: PlanKpis | null; summary: string | null; parent_plan_id: number | null; created_by: string | null;
-  command: string | null;
+  command: string | null; why: string | null;   // what made it (D57), null = a plan someone generated
 }
 
 export interface Disruption {
@@ -266,3 +269,83 @@ export interface SimTrack {
 }
 
 export interface SimClock { sim_now: string; speed: number; paused: boolean; tick_no: number }
+
+// ---------------------------------------------------------------- scenarios (ARCHITECTURE D55)
+export type Intensity = "LOW" | "MEDIUM" | "HIGH" | "SEVERE";
+export type ScenarioCategory = "ACCIDENT" | "INFRASTRUCTURE" | "URGENT_TASKING" | "WEATHER" | "LOGISTICS" | "EQUIPMENT"
+  | "SURVEILLANCE" | "HOSTILE_ACTION";
+export type ParamValue = string | number | string[];
+export interface ScenarioParam { key: string; label?: string; kind: "base" | "bases" | "type" | "choice" | "text" | "hidden";
+  options?: (string | number)[]; default: ParamValue; unit?: string }
+export interface ScenarioRunBrief { id: number; started_sim: string; intensity: Intensity | null; params: Record<string, ParamValue>;
+  elapsed_min: number }
+export interface ScenarioCard { id: number; code: string; name: string; category: ScenarioCategory; intensity: Intensity;
+  summary: string; description: string; params: ScenarioParam[]; intensity_presets: Partial<Record<Intensity, Record<string, ParamValue>>>;
+  adds: { priority: Priority; label: string }[]; run: ScenarioRunBrief | null }
+export interface ScenarioCatalogue { scenarios: ScenarioCard[]; ended: { id: number; name: string; started_sim: string; ended_sim: string }[];
+  committed_plan_id: number | null; sim: { enabled: boolean; sim_now: string; speed: number; paused: boolean } | null;
+  bases: { code: string; name: string }[]; types: string[] }
+export interface LiveScenario { id: number; name: string; code: string | null; intensity: Intensity | null; elapsed_min: number; need: number }
+export interface When { kind: "window" | "airborne" | "on_station" | "done" | "at"; a: string; b?: string }
+export type ImpactStatus = "in" | "proposed" | "apply" | "uncovered" | "waiting" | "info";
+export interface Impact { sev: "c" | "w" | "y" | "n"; what: string; sub: string; rec: string; alts: string[]; when: When | null;
+  status: ImpactStatus; mission?: string; priority?: Priority; mission_id?: number; fix?: Fix | null }
+export interface Requirement { label: string; need: string; from: string; have: string; when: When | null;
+  status: "met" | "approve" | "wait"; q: [number, number] | null; scenario?: string; run_id?: number }
+export interface ScenarioResponse {
+  run: { id: number; name: string; code: string | null; category: ScenarioCategory | null; intensity: Intensity | null;
+    status: "RUNNING" | "ENDED"; started_sim: string; elapsed_min: number };
+  lead: string; state: "live" | "decision" | "ended";
+  timeline: { ts: string; label: string; state: "done" | "now" | "next" }[];
+  decision: { plan_id: number; summary: string; also: string[] } | null;
+  impacts: Impact[]; need: number; requirements: Requirement[]; counts: { met: number; approve: number; wait: number };
+}
+
+// ---------------------------------------------------------------- situation and inventory transfers (ARCHITECTURE D56)
+export interface BaseRef { id: number; code: string; name: string }
+export interface TransferMove { key: string; kind: "FUEL" | "STOCK"; category: string; label: string; qty: number; unit: string;
+  from_base: BaseRef; to_base: BaseRef; distance_km: number; depart_ts: string; eta: string; needed_by: string | null; late: boolean;
+  reason: string }
+export interface TransferUnmet { kind: "FUEL" | "STOCK"; category: string; label: string; qty: number; unit: string; to_base: BaseRef; reason: string }
+export interface TransferRow { id: number; kind: "FUEL" | "STOCK"; category: string; label: string; qty: number; unit: string;
+  status: "IN_TRANSIT" | "DELIVERED" | "CANCELLED"; eta: string; distance_km: number; reason: string | null;
+  from_code: string; to_code: string; from_name: string; to_name: string }
+export interface SituationMission { mission_id: number; code: string; name: string; priority: Priority; mission_type: string;
+  tag: string; run_id: number | null; package: string | null; base: string | null; when: When | null;
+  status: "in" | "proposed" | "uncovered"; change: string | null; reason: string | null }
+export interface ScenarioBlock { run: ScenarioResponse["run"]; lead: string; state: "live" | "decision" | "ended";
+  timeline: ScenarioResponse["timeline"]; impacts: Impact[]; need: number; bases: number[];
+  analysis: Assessment | null; over: boolean; over_since: string | null }
+/** D62: a package as the impact assessment describes it. */
+export interface PkgView { base_id: number; base: string; type: string; n: number; launch: string; transit_min: number; fuel_l: number; risk: number }
+/** D62: one mission the scenario changes, comparing the plan without it and with it. */
+export interface ImpactChange { mission_id: number; code: string; name: string; priority: Priority; window: [string, string];
+  kind: "moved" | "dropped" | "added"; before?: PkgView; after?: PkgView | null; reason?: string | null; reason_code?: string; blocked?: string }
+export interface PlanTotals { covered: number; missions: number; by_priority: Record<Priority, { covered: number; of: number }>;
+  sorties?: number; flying_hours?: number; fuel_l?: number; risk_peak?: number }
+/** D62: the scenario's impact, from planning the same moment without and with it. */
+export interface Assessment { assessed_at: string; took_s: number; bases: string[]; aircraft_there: number; aircraft_by_type: Record<string, number>;
+  qra: { base: string; type: string; required: number; have_before: number; have_after: number }[]; aircraft_removed: number;
+  before: PlanTotals; with: PlanTotals; flights_there_before: number; kept_there: number; knock_on: number; changes: ImpactChange[];
+  transit_added_min: number; brief: string[] }
+/** GET /ops/plans/options (D61): the planner's choice for a mission, its other options, and every base and type to pick by hand. */
+export interface MissionOptions {
+  plan_id: number;
+  mission: { id: number; code: string; name: string; priority: Priority; window_start: string; window_end: string; required: number; on_station_min: number };
+  current: { item_id: number; base_id: number; type_id: number; launch: string } | null;
+  alternatives: { base: string; type: string; launch: string; cost_delta: number; why_not: string; base_id: number; type_id: number;
+    n?: number; base_name?: string; transit_min?: number; d_transit_min?: number; d_fuel_l?: number; risk?: number }[];
+  manual: { base_id: number; base: string; base_name: string; type_id: number; type: string; aircraft: number }[];
+}
+export interface Situation {
+  runs: LiveScenario[]; selected: number | null; now: string;
+  scenarios: ScenarioBlock[];          // All view (D59): one box per live scenario
+  plan: { id: number; kind: "PLAN" | "RETASK"; status: string; summary: string | null; covered: number | null; missions: number | null;
+    why: string; created_at: string; committed_at: string | null } | null;
+  in_force: { id: number; since: string; covered: number | null; missions: number | null; flying: number } | null;   // D60
+  decision: { plan_id: number; kind: "PLAN" | "RETASK"; summary: string | null; also: string[] } | null;
+  run: ScenarioResponse["run"] | null; lead: string | null; timeline: ScenarioResponse["timeline"]; state: "live" | "decision" | "ended";
+  missions: SituationMission[]; routine_unchanged: number; impacts: (Impact & { scenario?: string })[]; need: number;
+  requirements: Requirement[]; counts: { met: number; approve: number; wait: number };
+  transfers: { moves: TransferMove[]; unmet: TransferUnmet[]; in_transit: TransferRow[] };
+}

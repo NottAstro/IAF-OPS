@@ -16,6 +16,7 @@ from sqlalchemy.orm import Session
 from .. import models as M
 from ..audit import audit
 from ..services import sorties as SV
+from . import config as D
 from . import snapshot as S
 from .planner import item_spec_from_row, specs_from_row
 from .validate import validate
@@ -33,6 +34,56 @@ class PlanError(Exception):
 def current_committed(db: Session) -> M.Plan | None:
     return db.scalars(select(M.Plan).where(M.Plan.status == "COMMITTED", M.Plan.kind != "WHATIF")
                       .order_by(M.Plan.id.desc())).first()
+
+
+def under_review(db: Session) -> M.Plan | None:
+    """The plan the situation view shows (D56): a proposal waiting for a decision (full plan or re-task), else the
+    committed one."""
+    p = db.scalars(select(M.Plan).where(M.Plan.kind.in_(("PLAN", "RETASK")), M.Plan.status.in_(("PROPOSED", "APPROVED")))
+                   .order_by(M.Plan.id.desc())).first()
+    return p or current_committed(db)
+
+
+WHY_WORD = {"MISSION_NEW": ("new mission", "new missions"), "MISSION_CHANGED": ("mission to re-plan", "missions to re-plan"),
+            "AIRCRAFT_US": ("aircraft unavailable", "aircraft unavailable"),
+            "CREW_UNAVAILABLE": ("crew member unavailable", "crew members unavailable"), "RUNWAY_CLOSED": ("runway closed", "runways closed"),
+            "WX_BELOW_MINIMA": ("weather below minima", "weather below minima"), "FUEL_SHORT": ("fuel short", "fuel short"),
+            "STOCK_SHORT": ("weapons short", "weapons short"), "THREAT_ACTIVATED": ("route through a threat zone", "routes through threat zones"),
+            "RECOVERY_UNSAFE": ("recovery base unsafe", "recovery bases unsafe")}
+
+
+def why_text(ds: list) -> str | None:
+    """[(kind, message, scenario name | None)] -> one plain line, scenarios first: "Western sector air attack: 3 new
+    missions · Routine: 5 missions to re-plan". A single disruption keeps its own message."""
+    if not ds:
+        return None
+    if len(ds) == 1:
+        k, msg, sc, *mname = ds[0]
+        if mname and mname[0] and k in WHY_WORD:            # plain words, no codes: "Routine: crew member unavailable for Training near Jodhpur"
+            return f"{sc or 'Routine'}: " + (f"new mission, {mname[0]}" if k == "MISSION_NEW" else f"{WHY_WORD[k][0]} for {mname[0]}")
+        msg = msg.replace("SIM-", "")
+        return f"{sc}: {msg}" if sc else msg
+    groups: dict = {}
+    for k, _, sc, *_ in ds:
+        g = groups.setdefault(sc or "Routine", {})
+        g[k] = g.get(k, 0) + 1
+    def part(k, n):
+        one, many = WHY_WORD.get(k, ("change", "changes"))
+        return f"{n} {one if n == 1 else many}"
+    return " · ".join(f"{s}: " + ", ".join(part(k, n) for k, n in groups[s].items()) for s in sorted(groups, key=lambda s: s == "Routine"))
+
+
+def why(db: Session, p: M.Plan) -> str:
+    """One plain sentence: what made this plan (Planner context line and history)."""
+    if p.kind == "WHATIF":
+        return "What-if on a copy: nothing was written"
+    ds = db.execute(text("""SELECT d.kind, d.message, er.name, m.name FROM disruption d
+                            LEFT JOIN exercise_run er ON er.id = d.exercise_run_id
+                            LEFT JOIN mission m ON m.id = (d.payload ->> 'mission_id')::bigint
+                            WHERE d.proposal_plan_id = :p OR d.id = :t ORDER BY d.id"""),
+                    {"p": p.id, "t": p.trigger_disruption_id or 0}).all()
+    return why_text([tuple(r) for r in ds]) or (p.kpis or {}).get("why") or \
+        ("Re-plan of every package still to fly" if p.kind == "RETASK" else "Full plan for the next 24 hours")
 
 
 def _rows(db: Session, sql: str, **p) -> list[dict]:
@@ -53,7 +104,8 @@ def serialise(db: Session, pid: int) -> dict:
     mids = {i["mission_id"] for i in items} | {u["mission_id"] for u in unmet}
     missions = {r["id"]: r for r in _rows(db, """SELECT m.id, m.code, m.name, m.mission_type, m.priority, m.status, m.window_start,
             m.window_end, m.required_aircraft, m.on_station_min, m.max_risk, c.code AS command, ST_X(m.target_geom) AS lon,
-            ST_Y(m.target_geom) AS lat FROM mission m LEFT JOIN command c ON c.id = m.requesting_command_id
+            ST_Y(m.target_geom) AS lat, m.exercise_run_id, coalesce(er.name, 'Routine') AS tag FROM mission m
+            LEFT JOIN command c ON c.id = m.requesting_command_id LEFT JOIN exercise_run er ON er.id = m.exercise_run_id
             WHERE m.id = ANY(:ids)""", ids=list(mids) or [0])}
     bases = {r["id"]: r for r in _rows(db, "SELECT id, code, name FROM base WHERE side = 'OWN'")}
     types = {r["id"]: r for r in _rows(db, "SELECT id, name, role, category FROM aircraft_type")}
@@ -95,7 +147,8 @@ def serialise(db: Session, pid: int) -> dict:
                  "created_at": p.created_at, "horizon_start": p.horizon_start, "horizon_end": p.horizon_end,
                  "solver_status": p.solver_status, "solve_ms": p.solve_ms, "kpis": p.kpis, "summary": p.summary,
                  "parent_plan_id": p.parent_plan_id, "approved_by": p.approved_by, "approved_at": p.approved_at,
-                 "committed_at": p.committed_at, "trigger_disruption_id": p.trigger_disruption_id, "simulated": True},
+                 "committed_at": p.committed_at, "trigger_disruption_id": p.trigger_disruption_id, "why": why(db, p),
+                 "simulated": True},
         "items": out_items,
         "unmet": [{"id": u["id"], "mission": missions.get(u["mission_id"]), "reasons": u["reasons"], "fixes": u["fixes"],
                    "dropped_item_id": u["dropped_item_id"]} for u in unmet],
@@ -164,8 +217,19 @@ def _releasable(db: Session) -> set:
     cp = current_committed(db)
     if not cp:
         return set()
-    return {r[0] for r in db.execute(text("""SELECT s.id FROM plan_item pi JOIN sortie s ON s.id = pi.sortie_id
+    return {r[0] for r in db.execute(text("""SELECT s.id FROM plan_item pi JOIN sortie s
+                                              ON s.id = pi.sortie_id OR s.id = (pi.support ->> 'sortie_id')::bigint
                                               WHERE pi.plan_id = :p AND s.status IN ('PLANNED','CREWED','READY')"""), {"p": cp.id})}
+
+
+def own_sorties(db: Session, rows: list, pre_launch_only: bool = True) -> set:
+    """The sorties a package flies itself: its own and its tanker's. Re-checking or re-planning the package frees both,
+    so it never clashes with its own tanker. pre_launch_only: a tanker already airborne stays busy (re-planning)."""
+    ids = {s for r in rows for s in (r.get("sortie_id"), (r.get("support") or {}).get("sortie_id")) if s}
+    if not pre_launch_only or not ids:
+        return ids
+    return {r[0] for r in db.execute(text("SELECT id FROM sortie WHERE id = ANY(:i) AND status IN ('PLANNED','CREWED','READY')"),
+                                     {"i": list(ids)})}
 
 
 def _cancel_sortie(db: Session, s: M.Sortie, user: dict | None, reason: str, request_id: str | None) -> None:
@@ -178,6 +242,17 @@ def _cancel_sortie(db: Session, s: M.Sortie, user: dict | None, reason: str, req
     s.version += 1
     audit(db, user, "UPDATE", "sortie", s.id, s.departure_base_id, before, {"status": "CANCELLED", "cancel_reason": reason},
           request_id=request_id)
+
+
+def cancel_mission(db: Session, m: M.Mission, user: dict | None, request_id: str | None = None) -> None:
+    """Withdraw a mission: CANCELLED, its sorties not yet flying cancelled (weapons released), audited. Used by the
+    Missions page and when a scenario ends (D56); the monitor's next check frees what the packages held."""
+    before = {"status": m.status}
+    m.status = "CANCELLED"
+    for s in db.scalars(select(M.Sortie).where(M.Sortie.mission_id == m.id, M.Sortie.status.in_(LIVE))):
+        _cancel_sortie(db, s, user, "TASKING_CHANGE", request_id)
+    m.version += 1
+    audit(db, user, "UPDATE", "mission", m.id, None, before, {"status": "CANCELLED"}, request_id=request_id)
 
 
 def commit(db: Session, pid: int, user: dict, request_id: str | None = None) -> dict:
@@ -402,6 +477,17 @@ def _repair(db: Session, st: S.OpsState, actions: list) -> tuple[list[str], dict
     from .planner import assignment_from_row, cand_from_row, support_from_row
     skipped, repaired = {}, []
     live = [r for r, _, _, act in actions if act in ("NEW", "MOVED", "SWAP")]
+    # the clock ran while a person decided: a new or moved package whose preparation should already have started slips
+    # by that delay, if its mission window still holds (the validator below re-checks everything at the new time)
+    for r, _, _, act in actions:
+        m = st.missions.get(r["mission_id"])
+        need = st.now + td(minutes=D.PREP_MIN + 2)
+        if act not in ("NEW", "MOVED") or m is None or r["launch_ts"] >= need:
+            continue
+        slip = need - r["launch_ts"]
+        if r["on_station_ts"] + slip + td(minutes=m.on_station_min) <= m.window_end:
+            _shift(db, r, slip)
+            repaired.append(f"{m.code}: launch slipped {round(slip.total_seconds() / 60)} min while the decision was taken")
     for r in live:
         if r["launch_ts"] < st.now + td(minutes=5):
             skipped[r["id"]] = f"{st.missions[r['mission_id']].code if r['mission_id'] in st.missions else r['mission_id']}: launch time has passed"
@@ -457,6 +543,22 @@ def _repair(db: Session, st: S.OpsState, actions: list) -> tuple[list[str], dict
     return repaired, skipped
 
 
+def _shift(db: Session, r: dict, d: timedelta) -> None:
+    """Move a package (and its tanker leg) later by d, in the row and in the stored plan item."""
+    from sqlalchemy.orm.attributes import flag_modified
+    it = db.get(M.PlanItem, r["id"])
+    for k in ("launch_ts", "on_station_ts", "recovery_ts"):
+        r[k] = r[k] + d
+        setattr(it, k, r[k])
+    if r.get("support"):
+        sup = dict(r["support"])
+        for k in ("launch", "recovery", "rv_start", "rv_end"):
+            if sup.get(k):
+                sup[k] = (datetime.fromisoformat(sup[k]) + d).isoformat()
+        r["support"] = it.support = sup
+        flag_modified(it, "support")
+
+
 ITEM_COLS = ("mission_id", "base_id", "recovery_base_id", "aircraft_type_id", "loadout_code", "launch_ts", "on_station_ts",
              "recovery_ts", "n_aircraft", "aircraft_ids", "aircrew_ids", "crew_positions", "route_geom", "risk", "fuel_l",
              "score", "explanation", "alternatives", "support")
@@ -491,3 +593,51 @@ def routes_geojson(db: Session, pid: int) -> dict:
             feats.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": sup["route"]},
                           "properties": {**props, "support": True, "rv": sup["rv"], "base": props["base"], "type": "tanker"}})
     return {"type": "FeatureCollection", "features": feats}
+
+
+def generate_plan(user: dict, preset: str = "BALANCED", scope: str = "THEATRE", horizon_h: float | None = None,
+                  why: str | None = None) -> dict:
+    """Plan the current situation (routine and scenario missions alike) and store it as a proposal. The caller holds
+    monitor.LOCK (one solve at a time). Used by POST /ops/plans and when a scenario starts with nothing committed (D56)."""
+    from ..db import SessionLocal
+    from . import config as DC
+    from . import planner as P
+    horizon_h = horizon_h or DC.HORIZON_H
+    with SessionLocal() as db:
+        cp = current_committed(db)
+        command_id = user["command_id"] if scope == "COMMAND" or user["command_id"] else None
+        release, stability, keep = set(), {}, {}
+        if cp:
+            from .assign import Assignment
+            for r in (x for x in items_of(db, cp.id) if x["status"] == "COMMITTED"):
+                mine = command_id is None or db.get(M.Mission, r["mission_id"]).requesting_command_id == command_id
+                s = db.get(M.Sortie, r["sortie_id"]) if r["sortie_id"] else None
+                if mine and s and s.status == "PLANNED":
+                    release |= {s.id} | own_sorties(db, [r])           # and its tanker, unless already airborne
+                    stability[r["mission_id"]] = (r["base_id"], r["aircraft_type_id"], r["launch_ts"])
+                    keep[r["mission_id"]] = Assignment(r["aircraft_ids"], [tuple(x) for x in r["crew_positions"] or []])
+        st = S.build(db, horizon_h=horizon_h, release_sortie_ids=release)
+        if command_id is not None:
+            st.missions = {k: m for k, m in st.missions.items() if m.command_id == command_id}
+        if cp:   # packages already flying or too close to launch stay as they are
+            frozen = {r["mission_id"] for r in items_of(db, cp.id) if r["status"] == "COMMITTED"
+                      and r["sortie_id"] and db.get(M.Sortie, r["sortie_id"]).status != "PLANNED"}
+        else:
+            frozen = set()
+        res = P.plan(st, preset, stability=stability, keep=keep, fixed_missions=frozen)
+        if why:                                           # what made it (D57), e.g. a scenario starting
+            res.kpis["why"] = why
+        pid = P.store(db, res, preset=preset, user=user, scope="COMMAND" if command_id else "THEATRE",
+                      command_id=command_id, parent_plan_id=cp.id if cp else None,
+                      summary=f"{res.kpis['covered']} of {res.kpis['missions']} missions covered")
+        if cp:   # carry forward what this plan didn't touch (frozen packages, other commands)
+            carry = [r["id"] for r in items_of(db, cp.id) if r["status"] == "COMMITTED" and (r["mission_id"] in frozen or
+                     (command_id is not None and db.get(M.Mission, r["mission_id"]).requesting_command_id != command_id))]
+            copy_items(db, cp.id, pid, carry, "KEPT")
+        # one full plan waits for a decision at a time: the newest picture replaces older ones (D59)
+        db.execute(text("""UPDATE plan SET status = 'SUPERSEDED' WHERE kind = 'PLAN' AND status IN ('PROPOSED', 'APPROVED')
+                           AND scope = :s AND id <> :p"""), {"s": "COMMAND" if command_id else "THEATRE", "p": pid})
+        audit(db, user, "PLAN_GENERATE", "plan", pid, None, None, {"preset": preset, **{k: res.kpis[k] for k in
+              ("missions", "covered", "unmet", "solve_ms", "total_ms")}})
+        db.commit()
+        return {"plan_id": pid, "kpis": res.kpis}

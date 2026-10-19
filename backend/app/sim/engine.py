@@ -148,6 +148,9 @@ class Simulator:
             for msg in exercise.tick(db, ctx.now, self):
                 log.info("exercise: %s", msg)
                 ctx.changed |= {"aircraft", "runway", "fuel_storage", "mission"}
+            from ..services import transfers           # D56: convoys that have arrived credit the receiver
+            if transfers.deliver_due(db, ctx.now):
+                ctx.changed |= {"fuel_storage", "stock_level", "transfer"}
             raised = alert_rules.evaluate(ctx, self.unknowns)
             if st.tick_no % 12 == 0:
                 self.kpis(ctx)

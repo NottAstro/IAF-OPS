@@ -3,8 +3,8 @@ import { createPortal } from "react-dom";
 import "./SettingsWindow.css";
 
 /** Interactive settings open beside their heading, rather than expanding the settings list. */
-export function SettingsWindow({ title, meta, children, open, onOpen, onClose }: {
-  title: string; meta?: string; children: ReactNode; open: boolean; onOpen: () => void; onClose: () => void;
+export function SettingsWindow({ title, meta, icon, children, open, onOpen, onClose }: {
+  title: string; meta?: string; icon?: ReactNode; children: ReactNode; open: boolean; onOpen: () => void; onClose: () => void;
 }) {
   const id = useId();
   const trigger = useRef<HTMLButtonElement>(null);
@@ -71,7 +71,8 @@ export function SettingsWindow({ title, meta, children, open, onOpen, onClose }:
       onPointerEnter={(e) => { if (e.pointerType === "mouse") { cancel(); if (!open) timer.current = setTimeout(() => show(), 180); } }}
       onPointerLeave={(e) => { if (e.pointerType === "mouse") leave(); }}
       onClick={() => show(true)} onKeyDown={(e) => { if (e.key === "ArrowRight" || e.key === "ArrowDown") { e.preventDefault(); show(true); } }}>
-      <span>{title}</span><span className="group-meta">{meta}</span><span aria-hidden>›</span>
+      {icon && <span className="group-ico" aria-hidden><svg viewBox="0 0 24 24">{icon}</svg></span>}
+      <span>{title}</span>{meta && <span className="group-meta">{meta}</span>}<span className="group-chev" aria-hidden>›</span>
     </button>
     {open && createPortal(<div ref={panel} id={id} className="settings-window" role="dialog" aria-label={title} tabIndex={-1}
       style={{ left: position?.left ?? 0, top: position?.top ?? 0, visibility: position ? "visible" : "hidden" }}

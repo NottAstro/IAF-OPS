@@ -33,7 +33,7 @@ function MissionStrip() {
         <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>
           {q.data.committed_plan_id ? <>tasked by plan <a href="#" onClick={(e) => { e.preventDefault(); nav("/planner"); }}>#{q.data.committed_plan_id}</a></> : "no plan committed"}
           {q.data.open_disruptions > 0 && <> · <ToneText toneName="warning">{q.data.open_disruptions} open disruptions</ToneText></>}
-          {q.data.pending_retask_id && <> · <a href="#" onClick={(e) => { e.preventDefault(); nav(`/planner?plan=${q.data.pending_retask_id}`); }}>re-task proposal waiting</a></>}
+          {q.data.pending_retask_id && <> · <a href="#" onClick={(e) => { e.preventDefault(); nav("/planner"); }}>a change to the plan is waiting</a></>}
         </span></h2>
       <div className="table-wrap" style={{ marginBottom: 16 }}>
         <table className="table">

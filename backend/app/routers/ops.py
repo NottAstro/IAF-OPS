@@ -20,6 +20,7 @@ from ..db import SessionLocal, get_db
 from ..decide import config as D
 from ..decide import forecast as FC
 from ..decide import predict as PR
+from ..decide import choose as CH
 from ..decide import monitor, planner as P, snapshot as S, store, whatif as WI
 from ..rbac import require
 
@@ -46,8 +47,10 @@ MISSION_SQL = """SELECT m.id, m.code, m.name, m.mission_type, m.priority, m.stat
        ST_Y(m.target_geom) AS lat, tb.code AS target_base, m.target_base_id, m.created_at, m.approved_at,
        pi.id AS item_id, pi.plan_id, b.code AS tasked_base, t.name AS tasked_type, pi.n_aircraft AS tasked_n,
        pi.launch_ts AS tasked_launch, s.code AS sortie_code, s.status AS sortie_status, m.is_simulated AS simulated,
-       m.depends_on_id, dm.code AS depends_on, m.parent_mission_id, pm.code AS parent_code, m.part_no, m.parts, m.split_kind
+       m.depends_on_id, dm.code AS depends_on, m.parent_mission_id, pm.code AS parent_code, m.part_no, m.parts, m.split_kind,
+       m.exercise_run_id, coalesce(er.name, 'Routine') AS tag
 FROM mission m LEFT JOIN command c ON c.id = m.requesting_command_id LEFT JOIN base tb ON tb.id = m.target_base_id
+LEFT JOIN exercise_run er ON er.id = m.exercise_run_id
 LEFT JOIN mission dm ON dm.id = m.depends_on_id LEFT JOIN mission pm ON pm.id = m.parent_mission_id
 LEFT JOIN plan_item pi ON pi.mission_id = m.id AND pi.status = 'COMMITTED'
      AND pi.plan_id = (SELECT id FROM plan WHERE status = 'COMMITTED' AND kind <> 'WHATIF' ORDER BY id DESC LIMIT 1)
@@ -57,8 +60,15 @@ LEFT JOIN sortie s ON s.id = pi.sortie_id"""
 
 @router.get("/missions")
 def missions(status: str = "", priority: str = "", command: str = "", mission_type: str = "", q: str = "",
-             horizon_h: float = 0, user: dict = Depends(current_user), db: Session = Depends(get_db)):
+             horizon_h: float = 0, tag: str = "", user: dict = Depends(current_user), db: Session = Depends(get_db)):
     where, p = ["true"], {}
+    if tag == "routine":                       # D56: routine tasking vs a scenario run's own missions
+        where.append("m.exercise_run_id IS NULL")
+    elif tag == "scenario":
+        where.append("m.exercise_run_id IS NOT NULL")
+    elif tag.isdigit():
+        where.append("m.exercise_run_id = :run")
+        p["run"] = int(tag)
     for col, val in (("m.status", status), ("m.priority", priority), ("c.code", command), ("m.mission_type", mission_type)):
         if val:
             where.append(f"{col} = ANY(:{col.replace('.', '_')})")
@@ -275,17 +285,14 @@ def mission_action(mid: int, action: str, request: Request, user: dict = Depends
         if m.status != "REQUESTED":
             raise HTTPException(409, "Only requested missions can be approved.")
         m.status, m.approved_by, m.approved_at = "APPROVED", user["id"], datetime.now().astimezone()
+        m.version += 1
         audit(db, user, "APPROVE", "mission", m.id, None, before, {"status": "APPROVED"}, request_id=request.state.request_id)
     elif action == "cancel":
         if m.status in ("COMPLETED", "CANCELLED", "ACTIVE"):
             raise HTTPException(409, "Active or finished missions can't be cancelled here.")
-        m.status = "CANCELLED"
-        for s in db.scalars(select(M.Sortie).where(M.Sortie.mission_id == m.id, M.Sortie.status.in_(("PLANNED", "CREWED", "READY")))):
-            store._cancel_sortie(db, s, user, "TASKING_CHANGE", request.state.request_id)
-        audit(db, user, "UPDATE", "mission", m.id, None, before, {"status": "CANCELLED"}, request_id=request.state.request_id)
+        store.cancel_mission(db, m, user, request.state.request_id)
     else:
         raise HTTPException(404, "Unknown action")
-    m.version += 1
     db.commit()
     return {"ok": True, "status": m.status}
 
@@ -298,7 +305,7 @@ def missions_geo(user: dict = Depends(current_user), db: Session = Depends(get_d
         {"type": "Feature", "geometry": {"type": "Point", "coordinates": [r["lon"], r["lat"]]},
          "properties": {k: (v.isoformat() if isinstance(v, datetime) else v) for k, v in r.items()
                         if k in ("id", "code", "name", "mission_type", "priority", "status", "command", "tasked_base",
-                                 "tasked_type", "window_start", "window_end", "sortie_status")}}
+                                 "tasked_type", "window_start", "window_end", "sortie_status", "tag", "exercise_run_id")}}
         for r in rows if r["lon"] is not None]}
 
 
@@ -329,39 +336,7 @@ class PlanIn(BaseModel):
 
 
 def _generate(user: dict, body: PlanIn) -> dict:
-    with SessionLocal() as db:
-        cp = store.current_committed(db)
-        command_id = user["command_id"] if body.scope == "COMMAND" or user["command_id"] else None
-        release, stability, keep = set(), {}, {}
-        if cp:
-            from ..decide.assign import Assignment
-            for r in (x for x in store.items_of(db, cp.id) if x["status"] == "COMMITTED"):
-                mine = command_id is None or db.get(M.Mission, r["mission_id"]).requesting_command_id == command_id
-                s = db.get(M.Sortie, r["sortie_id"]) if r["sortie_id"] else None
-                if mine and s and s.status == "PLANNED":
-                    release.add(s.id)
-                    stability[r["mission_id"]] = (r["base_id"], r["aircraft_type_id"], r["launch_ts"])
-                    keep[r["mission_id"]] = Assignment(r["aircraft_ids"], [tuple(x) for x in r["crew_positions"] or []])
-        st = S.build(db, horizon_h=body.horizon_h, release_sortie_ids=release)
-        if command_id is not None:
-            st.missions = {k: m for k, m in st.missions.items() if m.command_id == command_id}
-        if cp:   # packages already flying or too close to launch stay as they are
-            frozen = {r["mission_id"] for r in store.items_of(db, cp.id) if r["status"] == "COMMITTED"
-                      and r["sortie_id"] and db.get(M.Sortie, r["sortie_id"]).status != "PLANNED"}
-        else:
-            frozen = set()
-        res = P.plan(st, body.preset, stability=stability, keep=keep, fixed_missions=frozen)
-        pid = P.store(db, res, preset=body.preset, user=user, scope="COMMAND" if command_id else "THEATRE",
-                      command_id=command_id, parent_plan_id=cp.id if cp else None,
-                      summary=f"{res.kpis['covered']} of {res.kpis['missions']} missions covered")
-        if cp:   # carry forward what this plan didn't touch (frozen packages, other commands)
-            carry = [r["id"] for r in store.items_of(db, cp.id) if r["status"] == "COMMITTED" and (r["mission_id"] in frozen or
-                     (command_id is not None and db.get(M.Mission, r["mission_id"]).requesting_command_id != command_id))]
-            store.copy_items(db, cp.id, pid, carry, "KEPT")
-        audit(db, user, "PLAN_GENERATE", "plan", pid, None, None, {"preset": body.preset, **{k: res.kpis[k] for k in
-              ("missions", "covered", "unmet", "solve_ms", "total_ms")}})
-        db.commit()
-        return {"plan_id": pid, "kpis": res.kpis}
+    return store.generate_plan(user, body.preset, body.scope, body.horizon_h)
 
 
 @router.post("/plans", status_code=201)
@@ -395,12 +370,67 @@ def plans(kind: str = "", status: str = "", limit: int = 20, user: dict = Depend
         where.append("p.status = ANY(:s)")
         p["s"] = status.split(",")
     rows = _q(db, f"""SELECT p.id, p.kind, p.status, p.scope, p.preset, p.created_at, p.committed_at, p.solve_ms, p.kpis,
-                             p.summary, p.parent_plan_id, u.username AS created_by, c.code AS command
+                             p.summary, p.parent_plan_id, u.username AS created_by, c.code AS command, p.trigger_disruption_id
                       FROM plan p LEFT JOIN app_user u ON u.id = p.created_by LEFT JOIN command c ON c.id = p.command_id
                       WHERE {' AND '.join(where)} ORDER BY p.id DESC LIMIT :lim""", **p)
+    ds: dict = {}                         # what made each plan, in one query (D57)
+    for r in db.execute(text("""SELECT d.id, d.proposal_plan_id, d.kind, d.message, er.name, m.name AS mname FROM disruption d
+                                LEFT JOIN exercise_run er ON er.id = d.exercise_run_id
+                                LEFT JOIN mission m ON m.id = (d.payload ->> 'mission_id')::bigint
+                                WHERE d.proposal_plan_id = ANY(:i) OR d.id = ANY(:t) ORDER BY d.id"""),
+                         {"i": [r["id"] for r in rows] or [0], "t": [r["trigger_disruption_id"] for r in rows if r["trigger_disruption_id"]] or [0]}):
+        for row in rows:
+            if row["id"] == r.proposal_plan_id or row["trigger_disruption_id"] == r.id:
+                ds.setdefault(row["id"], {})[r.id] = (r.kind, r.message, r.name, r.mname)
+    for row in rows:
+        row["why"] = store.why_text(list(ds.get(row["id"], {}).values())) or (row["kpis"] or {}).get("why")
     cp = store.current_committed(db)
     pending = db.scalars(select(M.Plan).where(M.Plan.kind == "RETASK", M.Plan.status == "PROPOSED").order_by(M.Plan.id.desc())).first()
-    return {"items": rows, "committed_id": cp.id if cp else None, "pending_retask_id": pending.id if pending else None}
+    review = store.under_review(db)          # D56: any proposal waiting (full plan or re-task)
+    return {"items": rows, "committed_id": cp.id if cp else None, "pending_retask_id": pending.id if pending else None,
+            "pending_id": review.id if review is not None and review.status in ("PROPOSED", "APPROVED") else None}
+
+
+class ChooseIn(BaseModel):
+    mission_id: int
+    base_id: int
+    type_id: int
+    on_station: datetime | None = None
+
+
+@router.get("/plans/options")
+def plan_options(mission_id: int, user: dict = Depends(current_user), db: Session = Depends(get_db)):
+    """D61: the planner's choice for a mission, its other options, and every base and type a person could pick."""
+    try:
+        return CH.options(db, mission_id)
+    except store.PlanError as e:
+        _err(e)
+
+
+@router.post("/plans/choose")
+async def plan_choose(body: ChooseIn, request: Request, user: dict = Depends(require(*PLANNERS))):
+    """D61: a person's own choice for one mission, checked with the planner's rules, into the plan waiting for a decision
+    (or a new proposal on top of the plan in force). Audited; nothing reaches the sorties until commit."""
+    rid = request.state.request_id
+
+    def run():
+        if not monitor.LOCK.acquire(timeout=30):
+            raise HTTPException(409, "The planner is busy. Try again in a moment.")
+        try:
+            with SessionLocal() as db:
+                try:
+                    out = CH.choose(db, user, body.mission_id, body.base_id, body.type_id, body.on_station, rid)
+                except store.PlanError as e:
+                    db.rollback()
+                    _err(e)
+                db.commit()
+                return out
+        finally:
+            monitor.LOCK.release()
+    out = await asyncio.to_thread(run)
+    from ..ws import hub
+    await hub.broadcast("entity.changed", {"types": ["plan"]}, None)
+    return out
 
 
 @router.get("/plans/current")
@@ -782,6 +812,10 @@ def summary(user: dict = Depends(current_user), db: Session = Depends(get_db)):
                      GROUP BY 1, 2""")
     open_d = db.execute(text("SELECT count(*) FROM disruption WHERE status IN ('OPEN','ASSESSED')")).scalar()
     pending = db.scalars(select(M.Plan).where(M.Plan.kind == "RETASK", M.Plan.status == "PROPOSED").order_by(M.Plan.id.desc())).first()
+    review = store.under_review(db)                      # D56: a full plan for the situation counts as waiting too
+    waiting = review if review is not None and review.status in ("PROPOSED", "APPROVED") else None
     return {"rows": rows, "committed_plan_id": cp.id if cp else None, "committed_at": cp.committed_at if cp else None,
             "open_disruptions": open_d, "pending_retask_id": pending.id if pending else None,
-            "pending_retask_summary": pending.summary if pending else None, "simulated": True}
+            "pending_retask_summary": pending.summary if pending else None,
+            "pending_plan_id": waiting.id if waiting else None, "pending_plan_summary": waiting.summary if waiting else None,
+            "simulated": True}

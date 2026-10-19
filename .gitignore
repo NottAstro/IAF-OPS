@@ -14,6 +14,7 @@ data/runtime/
 
 # local tool output
 .gstack/
+.superpowers/
 data/logs/
 .vite/
 data/dumps/

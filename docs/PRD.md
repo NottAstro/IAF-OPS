@@ -275,7 +275,7 @@ Priority: **M** = must, **S** = should, **C** = could. Entities are defined in [
 | ID | P | Requirement |
 |---|---|---|
 | FR-TER-01 | M | Terrain mode turns on 3D terrain. Provider order: Cesium ion World Terrain (free token) → Re:Earth keyless terrain → flat ellipsoid (with a notice). |
-| FR-TER-02 | M | Tilt toggle: oblique −35° ↔ top-down −89°. Free tilt with the right-drag or Ctrl-drag gesture. |
+| FR-TER-02 | M | **Map angle** setting in Map settings (D58): Tilted (oblique) ↔ Straight (top-down, north-up). Free tilt with the right-drag or Ctrl-drag gesture while Tilted; Straight locks the map flat. |
 | FR-TER-03 | M | Clicking the map flies to an oblique close-up of a ~30 km box around the clicked point. |
 | FR-TER-04 | M | Elevation readout under the cursor and at the clicked point (m and ft). |
 | FR-TER-05 | S | Vertical exaggeration 1×–3×. |
@@ -631,23 +631,26 @@ Everything is advisory: a person approves every change, and every approval is au
 | FR-WIF-01 | M | What-if: ground aircraft of a type, close a runway, weather front, threat zone, mission surge, fuel shortfall, base attack; re-plan on a copy and compare with the baseline. Nothing is written. |
 | FR-WIF-02 | M | COA comparison: the same picture planned with two or three presets side by side. |
 
-### FR-EXR: exercise mode (directing staff)
+### FR-EXR: scenarios (directing staff)
 | ID | P | Requirement |
 |---|---|---|
-| FR-EXR-01 | M | Start / stop an exercise from a scenario (timed injects) or free play; pause, step and speed (×1, ×10, ×60). |
-| FR-EXR-02 | M | Live injects: runway closed, weather front, threat zone, aircraft grounding, pop-up mission, fuel delay, radar down, unknown track. Scripted injects can target "AUTO" (the busiest tasked base). |
+| FR-EXR-01 | M | **The situation is the starting point (D56).** Scenarios page (replaces Exercise control, D55): eight scenarios, one per category (accident, infrastructure, urgent tasking, weather, logistics, equipment, surveillance, hostile action). A scenario is **one incident**: starting it applies its effects on supply (runway closed, aircraft lost, fuel down…) **and creates the missions it demands** (e.g. air attack → P1 patrol, P2 early-warning orbit, P2 reconnaissance), tagged with the scenario; routine tasking is the baseline they compete with. Each has an intensity (low / medium / high / severe, a preset of its parameters) and a short form; the page lists the missions each adds. Several scenarios may be live at once, one run per scenario; no plan has to exist first. Ending a scenario withdraws its missions not yet flying. Clock pause and speed (×1, ×10, ×60). |
+| FR-EXR-02 | M | Effects: runway closed, weather front, threat zone (generic, D31), aircraft grounding (by base list), aircraft lost, base strike (runway, radars, fuel), pop-up mission (at a base or a point near one), fuel delay (by base list), radar down, unknown track. Scripted effects can target "AUTO" (the busiest tasked base). |
 | FR-EXR-03 | M | After-action report: injects, disruptions with proposal time and decision time, plans and approvals, mission outcomes (met / partial / missed), KPI samples; CSV with the SIMULATED header and a print view. |
 | FR-EXR-04 | M | The Ops map view shows simulated sorties flying their routes, unknown tracks, planned and proposed routes, mission areas, generic threat zones, airspace, radar / AD coverage and weather impact. |
+| FR-EXR-05 | M | **Planner → Situation** (since D61: one card per situation; opening one walks it through Situation → Plan → Decide → Mission, where in Plan a person keeps the planner's recommendation, takes one of its other options, applies a fix or picks a base, aircraft and time of their own, which the planner's rules check before it enters the plan; Mission approves it; the expert views are under "Details & tools"). When the situation changes the planner proposes automatically: a full plan when nothing is committed, else a re-task. One screen: the situation strip (All · each live scenario), the decision line (Commit / Reject the plan as one), for a selected scenario its sentence and five-step live timeline, **Missions and plan** (tag Routine / scenario, priority, package, when, status), **Impact and what we recommend** (what it broke or displaced, the recommendation and the options weighed, when, status), **Requirements** by base and **Inventory transfers** (FR-EXR-07). Every row comes from the engine; no Gantt. |
+| FR-EXR-07 | M | **Inventory optimisation (D56):** for the plan under review, recommend moves of fuel (ATF), weapons and spares between bases so its packages can draw what they need and bases return to their fuel reserve and spares reorder level: a min-cost flow over road distance, donors never below their own reserve or reorder level, ETA by convoy, late arrivals flagged, needs no base can meet listed. A person approves each move (or all); the donor is debited at once, the receiver credited when the convoy arrives, both audited; the planner counts stock on the road. Shown in the Situation view and on the Ops map. |
+| FR-EXR-06 | M | Commit tolerates the time a decision takes: a new or moved package whose preparation should already have started slips by that delay when its mission window still holds, then is re-validated; otherwise it is repaired or skipped as before (FR-PLN-05). |
 
 ### Phase 2 demo questions (each < 30 s)
 1. "Plan the next 24 hours: is every P1 covered?"
 2. "Why was this base chosen for CAP-WAC-003, and what lost?"
 3. "Which missions are uncovered and what would fix them?"
-4. "A runway just closed: what changes?" (exercise inject → proposal → commit)
+4. "A runway just closed: what changes?" (Scenarios → start *Runway closure at Halwara* → Planner → Live scenarios → commit)
 5. "What if 20 Su-30MKI are grounded tomorrow?" (what-if)
 6. "A P1 pop-up 20 minutes away: can anyone already airborne take it?" (in-flight re-role → commit)
 7. "Which of my tails are most likely to go unserviceable, and did the P1 packages get the reliable ones?" (base panel snag risk, package explanation)
 8. "Nobody can hold a 6-hour CAP: what now?" (uncovered → "Split into 2 reliefs" → apply → re-plan)
-9. "How much faster is this than planning by hand?" (Planner → Manual baseline, then BENCHMARK.md)
+9. "How much faster is this than planning by hand?" (Planner → Details & tools → Plan by hand, then BENCHMARK.md)
 10. "Give Halwara its orders for tomorrow." (Planner → Air tasking order → base VIHX → Print)
 

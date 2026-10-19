@@ -14,7 +14,7 @@ from . import config, crud
 from .auth import router as auth_router
 from .live import feeds
 from .live.routes import router as live_router
-from .routers import alerts, bases, exercise as exercise_router, gis, ops, overview, people, sim as sim_router
+from .routers import alerts, bases, exercise as exercise_router, gis, ops, overview, people, scenarios as scenarios_router, sim as sim_router, transfers as transfers_router
 from .sim.engine import Simulator
 from .weather import metar
 from .weather.routes import router as wx_router, wind_router
@@ -79,7 +79,7 @@ async def http_error(request: Request, exc: FHTTPException):
 
 
 API = "/api/v1"
-for r in (auth_router, ops.router, exercise_router.router, crud.router, bases.router, overview.router, people.router,
+for r in (auth_router, ops.router, exercise_router.router, scenarios_router.router, transfers_router.router, crud.router, bases.router, overview.router, people.router,
           alerts.router, gis.router, sim_router.router, live_router, wx_router, wind_router):
     app.include_router(r, prefix=API)
 app.include_router(ws_router)

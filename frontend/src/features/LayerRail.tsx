@@ -1,6 +1,7 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
 import { api } from "../api/client";
+import type { LiveScenario } from "../api/types";
 import { zulu } from "../lib/format";
 import { OptionPanel } from "../components/OptionPanel";
 import { SettingsWindow } from "../components/SettingsWindow";
@@ -17,8 +18,20 @@ const WX: Record<WxLayer, { label: string; swatch: ReactNode }> = {
   wind: { label: "Wind flow", swatch: <span className="swatch-line" style={{ borderColor: "#e1f0ff" }} /> },
   metar: { label: "Airfield weather (METAR)", swatch: <span className="swatch-dot" style={{ background: "var(--ok)" }} /> },
 };
+/** Map settings → Map angle (D58): value, label, sub-label, icon. */
+const ANGLES: [boolean, string, string, ReactNode][] = [
+  [true, "Tilted", "3D terrain", <><path d="M8 5h18l6 15H2z" /><path d="m8 17 6-6 4 4 3-3 5 5" /></>],
+  [false, "Straight", "top-down", <><rect x="8" y="2" width="18" height="18" rx="2" /><path d="M8 11h18M17 2v18" /><path d="m17 5-1.6 3h3.2z" /></>],
+];
+/** Icons for the Map settings rows (outline, currentColor). */
+const GROUP_ICON: Record<string, ReactNode> = {
+  View: <><path d="M12 3 3 8l9 5 9-5z" /><path d="m3 13 9 5 9-5" /></>,
+  "Air bases": <path d="M12 3c.8 0 1.2.8 1.2 2v4.5l7 4v1.8l-7-2v4l2 1.6V20L12 19.3 9.8 20v-1.1l2-1.6v-4l-7 2v-1.8l7-4V5c0-1.2.4-2 1.2-2z" />,
+  "Boundaries & names": <><path d="m3 6 6-2 6 2 6-2v14l-6 2-6-2-6 2z" /><path d="M9 4v14M15 6v14" /></>,
+  symbols: <><circle cx="12" cy="12" r="9" /><path d="M12 11v5M12 8h.01" /></>,
+};
 const VIEW: Record<Mode, { tab: string; hint: string; icon: ReactNode }> = {
-  LIVE: { tab: "Live", hint: "Aircraft broadcasting on public ADS-B, updated every 10 s. Right-drag to rotate and tilt the 3D terrain.",
+  LIVE: { tab: "Live", hint: "Aircraft broadcasting on public ADS-B, updated every 10 s. Tilted or straight: Map settings → Map angle.",
     icon: <path fill="currentColor" stroke="none" d="M12 2.5l1.5 6.3 7.5 4.4v1.9l-7.5-2.3-.4 5.5 2.7 2v1.4L12 20.7l-3.8 1v-1.4l2.7-2-.4-5.5L3 15.1v-1.9l7.5-4.4z" /> },
   WX: { tab: "Weather", hint: "Satellite clouds, rain and wind on a flat map. Click anywhere for a point forecast.",
     icon: <path d="M7 18.5h10.6a4.1 4.1 0 0 0 .6-8.15A6.1 6.1 0 0 0 6.5 9.6 4.5 4.5 0 0 0 7 18.5z" /> },
@@ -55,13 +68,16 @@ const SWATCH: Record<LayerId, ReactNode> = {
   "ops-ad": <span className="swatch" style={{ borderRadius: "50%", border: "1px dashed var(--accent)", background: "var(--accent-tint)" }} />,
   "ops-ad-sites": <span className="swatch" style={{ color: "var(--sim)", border: "1px solid var(--sim)", borderRadius: "0 0 50% 50%", textAlign: "center" }}>⌃</span>,
   "ops-wx": <span className="swatch" style={{ borderRadius: "50%", border: "2px solid var(--warning)" }} />,
+  "ops-scenarios": <span className="swatch" style={{ borderRadius: "50%", border: "2px solid var(--warning)", background: "transparent" }} />,
+  "ops-transfers": <span className="swatch-line" style={{ borderColor: "var(--ok)", borderTopStyle: "dashed" }} />,
 };
 
 /** Ops view status: the plan the simulated picture is flying, any re-task waiting, and the simulator clock. */
 function OpsStatus() {
   const s = useStore();
   const sum = useQuery({ queryKey: ["ops-summary"], queryFn: () => api<{ committed_plan_id: number | null; open_disruptions: number;
-    pending_retask_id: number | null; pending_retask_summary: string | null }>("/ops/summary"), refetchInterval: 20000 });
+    pending_plan_id: number | null; pending_plan_summary: string | null }>("/ops/summary"), refetchInterval: 20000 });
+  const live = useQuery({ queryKey: ["scenarios", "live"], queryFn: () => api<LiveScenario[]>("/ops/scenarios/live"), refetchInterval: 15000 });
   const d = sum.data;
   const c = s.simClock;
   return (
@@ -70,10 +86,12 @@ function OpsStatus() {
         <b className="mono" style={{ marginLeft: "auto", color: "var(--sim)" }}>{c ? `${zulu(c.sim_now)} ×${c.speed}${c.paused ? " paused" : ""}` : "not running"}</b></div>
       <div className="tool-row"><span>Committed plan</span>
         <b className="mono" style={{ marginLeft: "auto", color: "var(--text-1)" }}>{d?.committed_plan_id ? `#${d.committed_plan_id}` : "none"}</b></div>
-      {d?.pending_retask_id && <div className="tool-row" style={{ display: "block" }}>
-        <span className="s-warning">◆ Re-task proposal waiting: {d.pending_retask_summary}</span>
-        <div style={{ marginTop: 4 }}><a href={`/planner?plan=${d.pending_retask_id}`}>Review in the planner ›</a></div></div>}
-      {!d?.committed_plan_id && <div className="toggle-note" style={{ margin: "4px 0 0" }}>No plan committed yet. <a href="/planner">Generate one in the planner ›</a></div>}
+      {(live.data ?? []).map((r) => <div key={r.id} className="tool-row"><span className="s-warning">◆ {r.name}</span>
+        <a style={{ marginLeft: "auto" }} href={`/planner?view=situation&run=${r.id}`}>open ›</a></div>)}
+      {d?.pending_plan_id && <div className="tool-row" style={{ display: "block" }}>
+        <span className="s-warning">◆ Plan waiting for a decision: {d.pending_plan_summary}</span>
+        <div style={{ marginTop: 4 }}><a href="/planner?view=situation">Review in the planner ›</a></div></div>}
+      {!d?.committed_plan_id && !d?.pending_plan_id && <div className="toggle-note" style={{ margin: "4px 0 0" }}>No plan yet. <a href="/scenarios">Start a scenario</a> or <a href="/planner?view=situation">plan routine tasking ›</a></div>}
       {d && d.open_disruptions > 0 && <div className="toggle-note" style={{ margin: "4px 0 0" }}>{d.open_disruptions} open disruption{d.open_disruptions > 1 ? "s" : ""}</div>}
     </div>
   );
@@ -195,12 +213,29 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
       )}
 
       {pane === "settings" && (
-        <aside className="flyout" aria-label="Map settings">
+        <aside className="flyout map-settings" aria-label="Map settings">
           {head("Map settings")}
-          <p className="view-hint">Layers shown in every view.</p>
-          {focus && <p className="view-hint">Connectivity focus hides other layers. Satellite imagery remains available.</p>}
+          <section className="ms-sec">
+            <div className="ms-cap">Map angle</div>
+            <div className="angle" role="radiogroup" aria-label="Map angle">
+              {ANGLES.map(([v, t, sub, icon]) => (
+                <button key={t} role="radio" aria-checked={s.tilt === v} className={`angle-opt${s.tilt === v ? " on" : ""}`}
+                  disabled={s.mode === "WX" || focus} onClick={() => s.set({ tilt: v })}>
+                  <svg viewBox="0 0 34 24" aria-hidden>{icon}</svg>
+                  <span><b>{t}</b><small>{sub}</small></span>
+                </button>
+              ))}
+            </div>
+            <p className="ms-note">
+              {s.mode === "WX" ? "The Weather view is always straight, so clouds and wind line up. Your choice returns in Live, Infra and Ops."
+                : s.tilt ? "Right-drag to rotate and tilt. Saved for every view." : "Flat and north-up. Saved for every view."}
+            </p>
+          </section>
+          <section className="ms-sec">
+            <div className="ms-cap">Layers <span>shown in every view</span></div>
+            {focus && <p className="view-hint">Connectivity focus hides other layers. Satellite imagery remains available.</p>}
           {LAYER_GROUPS.filter((g) => groupIds(g).every((k) => !layerMode(k))).map((g) => (
-            <SettingsWindow key={g} title={g} meta={onCount(groupIds(g), s.layers)} open={settingsWindow === g}
+            <SettingsWindow key={g} title={g} icon={GROUP_ICON[g]} meta={onCount(groupIds(g), s.layers).replace(" on", "")} open={settingsWindow === g}
               onOpen={() => setSettingsWindow(g)} onClose={() => setSettingsWindow((current) => current === g ? null : current)}>
               {(g === "View" ? ["relief"] as const : groupIds(g)).map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)} disabled={focus} />)}
               {g === "View" && <>
@@ -210,14 +245,10 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
                   <input type="range" min={1} max={3} step={0.5} value={s.exaggeration} disabled={focus} onChange={(e) => s.set({ exaggeration: Number(e.target.value) })} />
                   <span className="mono" style={{ color: "var(--text-1)" }}>{s.exaggeration}×</span></label>
                 <Toggle swatch={SWATCH.satellite} label={LAYERS.satellite.label} on={s.layers.satellite} onChange={() => s.toggleLayer("satellite")} />
-                <Toggle swatch={<span className="toggle-count">3D</span>} label="3D tilt" on={s.tilt} onChange={() => s.set({ tilt: !s.tilt })} disabled={s.mode === "WX" || focus} />
-                <div className="toggle-note" style={{ margin: "2px 0 0" }}>
-                  {s.mode === "WX" ? "The Weather view is always flat; your tilt preference returns in Live, Infra and Ops." : "Right-drag to rotate and tilt. 3D tilt and relief height are saved for every view."}
-                </div>
               </>}
             </SettingsWindow>
           ))}
-          <SettingsWindow title="How to read the symbols" open={settingsWindow === "symbols"}
+          <SettingsWindow title="How to read the symbols" icon={GROUP_ICON.symbols} open={settingsWindow === "symbols"}
             onOpen={() => setSettingsWindow("symbols")} onClose={() => setSettingsWindow((current) => current === "symbols" ? null : current)}>
             <div className="toggle-note" style={{ fontSize: 12, lineHeight: "18px", color: "var(--text-2)", margin: 0 }}>
               <p style={{ margin: "4px 0" }}>Air bases are rectangular tags coloured by owner: neon blue IAF, grey Navy / Army / Coast Guard, red Pakistan and China, green other neighbours. Small runway tags are advanced landing grounds. Zoom in and the tag shows the base code.</p>
@@ -229,6 +260,7 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
               <p style={{ margin: "4px 0" }}>The glowing line is India's boundary as officially depicted by the Government of India.</p>
             </div>
           </SettingsWindow>
+          </section>
         </aside>
       )}
     </div>

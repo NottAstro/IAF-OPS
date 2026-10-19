@@ -49,10 +49,12 @@ export const LAYER_IDS: Record<LayerId, string[]> = {
   "ops-ad": ["ops-ad-fill", "ops-ad"],
   "ops-ad-sites": ["ops-ad-sites"],
   "ops-wx": ["ops-wx", "ops-wx-label"],
+  "ops-scenarios": ["ops-scenarios", "ops-scenarios-label"],
+  "ops-transfers": ["ops-transfers", "ops-transfers-planned", "ops-transfers-label"],
 };
 
 /** Clickable layers, top-most first. */
-export const INTERACTIVE = ["connectivity-bases", "ops-unk", "ops-sim", "ops-missions", "ops-routes", "ops-ad-sites", "live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
+export const INTERACTIVE = ["connectivity-bases", "ops-unk", "ops-sim", "ops-missions", "ops-scenarios", "ops-transfers", "ops-transfers-planned", "ops-routes", "ops-ad-sites", "live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
 export const CONNECTIVITY_LAYERS = ["connectivity-direct", "connectivity-direct-label", "connectivity-road-glow", "connectivity-road", "connectivity-access", "connectivity-halo", "connectivity-bases"];
 /** Weather rasters go under the boundaries, so borders and names stay readable through the clouds. */
 export const OVERLAY_BEFORE = "adm2";
@@ -257,8 +259,27 @@ export function buildStyle(): StyleSpecification {
     { id: "ops-wx-label", type: "symbol", source: "ops-wx", minzoom: 5, layout: {
         visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 9.5, "text-offset": [0, -2.1], "text-optional": true },
       paint: { "text-color": ["get", "color"], "text-halo-color": halo, "text-halo-width": 1.2 } },
+    // D56: what live scenarios did to bases, and fuel / weapons / spares moving between bases (both simulated)
+    { id: "ops-scenarios", type: "circle", source: "ops-scenarios", layout: { visibility: "none" },
+      paint: { "circle-radius": zoomLin(4, 13, 8, 22), "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": cssVar("--warning"),
+        "circle-stroke-width": 2, "circle-stroke-opacity": 0.95 } },
+    { id: "ops-scenarios-label", type: "symbol", source: "ops-scenarios", minzoom: 4.5, layout: {
+        visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 10, "text-offset": [0, 2.2], "text-anchor": "top",
+        "text-optional": true },
+      paint: { "text-color": cssVar("--warning"), "text-halo-color": halo, "text-halo-width": 1.3 } },
+    { id: "ops-transfers", type: "line", source: "ops-transfers", filter: ["==", ["get", "state"], "in_transit"],
+      layout: { visibility: "none", "line-cap": "round" },
+      paint: { "line-color": cssVar("--ok"), "line-width": zoomLin(4, 1.6, 8, 2.8), "line-opacity": 0.9 } },
+    { id: "ops-transfers-planned", type: "line", source: "ops-transfers", filter: ["==", ["get", "state"], "recommended"],
+      layout: { visibility: "none" },
+      paint: { "line-color": cssVar("--ok"), "line-width": zoomLin(4, 1.2, 8, 2), "line-dasharray": [2, 2], "line-opacity": 0.75 } },
+    { id: "ops-transfers-label", type: "symbol", source: "ops-transfers", minzoom: 5, layout: {
+        visibility: "none", "symbol-placement": "line-center", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 9.5,
+        "text-optional": true },
+      paint: { "text-color": cssVar("--ok"), "text-halo-color": halo, "text-halo-width": 1.3 } },
     { id: "ops-missions", type: "circle", source: "ops-missions", layout: { visibility: "none" },
-      paint: { "circle-radius": zoomLin(4, 4, 8, 7), "circle-color": ["get", "color"], "circle-stroke-color": bg, "circle-stroke-width": 1.5 } },
+      paint: { "circle-radius": zoomLin(4, 4, 8, 7), "circle-color": ["get", "color"],
+        "circle-stroke-color": ["case", ["get", "scn"], cssVar("--warning"), bg], "circle-stroke-width": ["case", ["get", "scn"], 2.5, 1.5] } },
     { id: "ops-missions-label", type: "symbol", source: "ops-missions", minzoom: 5.5, layout: {
         visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 9.5, "text-offset": [0, 1.1], "text-anchor": "top",
         "text-optional": true },
@@ -362,6 +383,8 @@ export function buildStyle(): StyleSpecification {
       "ops-missions": emptyFc(),
       "ops-sim": emptyFc(),
       "ops-wx": emptyFc(),
+      "ops-scenarios": emptyFc(),
+      "ops-transfers": emptyFc(),
     },
     layers,
   };

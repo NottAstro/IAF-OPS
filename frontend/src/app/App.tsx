@@ -14,7 +14,8 @@ import { MapView } from "../map/MapView";
 import { Admin } from "../pages/Admin";
 import { Alerts, Audit } from "../pages/Alerts";
 import { Ato } from "../pages/Ato";
-import { AfterAction, Exercise } from "../pages/Exercise";
+import { AfterAction } from "../pages/Exercise";
+import { Scenarios } from "../pages/Scenarios";
 import { Missions } from "../pages/Missions";
 import { Planner } from "../pages/Planner";
 import { Inventory } from "../pages/Inventory";
@@ -60,7 +61,8 @@ function Authed({ user }: { user: User }) {
             <Route path="/missions" element={<Missions user={user} />} />
             <Route path="/planner" element={<Planner user={user} />} />
             <Route path="/planner/ato/:pid" element={user.role === "VIEWER" ? <Navigate to="/map" /> : <Ato user={user} />} />
-            <Route path="/exercise" element={user.role === "ADMIN" ? <Exercise /> : <Navigate to="/map" />} />
+            <Route path="/scenarios" element={user.role === "VIEWER" ? <Navigate to="/map" /> : <Scenarios user={user} />} />
+            <Route path="/exercise" element={<Navigate to="/scenarios" replace />} />
             <Route path="/exercise/runs/:id" element={user.role === "VIEWER" ? <Navigate to="/map" /> : <AfterAction />} />
             <Route path="/inventory" element={<Navigate to="/inventory/aircraft" replace />} />
             <Route path="/inventory/:entity/:typeId?" element={<Inventory user={user} />} />
@@ -81,7 +83,7 @@ function Brand() {
   return (
     <span className="brand">
       <img src="/iaf-crest.svg" alt="" />
-      <span>Air Operations Picture<span className="brand-sub">SIH26250 · decision support prototype</span></span>
+      <span>Air Operations Picture</span>
     </span>
   );
 }
@@ -107,13 +109,12 @@ function TopBar({ user }: { user: User }) {
     <header className="topbar">
       <Brand />
       <nav className="nav" aria-label="Main">
-        {link("/map", "Map")}{link("/overview", "Overview")}{link("/missions", "Missions")}{link("/planner", "Planner")}
-        {link("/inventory", "Inventory")}{link("/pilots", "Aircrew")}
+        {link("/map", "Map")}{link("/overview", "Overview")}{link("/missions", "Missions")}{link("/planner", "Planner")}{user.role !== "VIEWER" && link("/scenarios", "Scenarios")}
+        {link("/inventory", "Inventory")}
         <NavLink to="/alerts" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
           Alerts{crit + warn > 0 && <span className="badge-count" style={{ background: crit ? "var(--critical)" : "var(--warning)" }} aria-label={`${crit} critical, ${warn} warning`}>{crit ? `■ ${crit}` : `◆ ${warn}`}</span>}
         </NavLink>
         {user.role !== "VIEWER" && link("/audit", "Audit")}
-        {user.role === "ADMIN" && link("/exercise", "Exercise")}
         {user.role === "ADMIN" && link("/admin", "Admin")}
       </nav>
       <span className="topbar-spacer" />
@@ -133,7 +134,7 @@ function SimClock() {
   const c = useStore((s) => s.simClock);
   if (!c) return null;
   return (
-    <div className="clock sim-clock" title="Simulated time (exercise clock), not real time">
+    <div className="clock sim-clock" title="Simulated time (scenario clock), not real time">
       <span className="clock-main"><span className="sim-badge">SIM</span> {istTime(c.sim_now).replace(" IST", "")}</span>
       <span className="clock-sub">{c.paused ? "paused" : `×${c.speed}`} · {zulu(c.sim_now)}</span>
     </div>
