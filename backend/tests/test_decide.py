@@ -408,6 +408,9 @@ def test_commit_then_retask_a_runway_closure():
     affected = {i["mission"]["code"] for i in future if i["base"]["code"] == base}
     assert touched and touched <= affected | {u["mission"]["code"] for u in prop["unmet"]}
     assert all(i["base"]["code"] != base for i in prop["items"] if i["change"] in ("MOVED", "NEW"))
+    k = prop["plan"]["kpis"]                  # coverage counts the whole plan, not the re-solved part
+    assert sum(v["covered"] for v in k["by_priority"].values()) == k["covered"] and \
+        sum(v["of"] for v in k["by_priority"].values()) == k["missions"], k
     assert out["proposal"]["ms"] < 15000
     r = air.post(f"/api/v1/ops/plans/{out['proposal']['plan_id']}/commit")
     assert r.status_code == 200, r.text

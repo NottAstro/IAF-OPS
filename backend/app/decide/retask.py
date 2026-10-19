@@ -153,7 +153,8 @@ def detect(db: Session) -> Detection | None:
             movable.append(i)
         elif not s or s.status not in ("CANCELLED", "ABORTED", "COMPLETED", "LANDED"):
             frozen.append(i)
-    st = S.build(db, release_sortie_ids={i["sortie_id"] for i in movable})
+    # a package is checked against everything except itself: its own sortie and its tanker's
+    st = S.build(db, release_sortie_ids=store.own_sorties(db, movable, pre_launch_only=False))
     viol = validate(st, [x for i in movable for x in P.specs_from_row(i)])
     det = Detection(cp.id, st, items, frozen, movable, viol, [], [])
     by_id = {str(i["id"]): i for i in movable}
@@ -307,7 +308,7 @@ def propose(db: Session, det: Detection, user: dict | None = None, disruption_id
     if scope:
         # ------------------------------------------------------------ rung 2: partial re-solve of the affected missions
         rung = "partial"
-        release = {movable[i]["sortie_id"] for i in unresolved}
+        release = {movable[i]["sortie_id"] for i in unresolved} | store.own_sorties(db, [movable[i] for i in unresolved])
         st2 = S.build(db, release_sortie_ids=release)
         # packages swapped in rung 1 now hold different people: model them as busy for this solve
         for row in new_rows:
@@ -323,7 +324,7 @@ def propose(db: Session, det: Detection, user: dict | None = None, disruption_id
         lost = [u for u in res.unmet if st2.missions[u["mission_id"]].priority in ("P1", "P2")]
         if lost:
             # -------------------------------------------------------- rung 3: full re-solve of every movable package
-            st3 = S.build(db, release_sortie_ids={i["sortie_id"] for i in det.movable})
+            st3 = S.build(db, release_sortie_ids={i["sortie_id"] for i in det.movable} | store.own_sorties(db, det.movable))
             frozen_m = {i["mission_id"] for i in det.frozen}
             stab3 = {r["mission_id"]: (r["base_id"], r["aircraft_type_id"], r["launch_ts"]) for r in det.movable}
             keep3 = {r["mission_id"]: P.assignment_from_row(r) for r in det.movable}
@@ -379,10 +380,19 @@ def propose(db: Session, det: Detection, user: dict | None = None, disruption_id
     counts["KEPT"] = len(keep_rows) + len(det.frozen) - len(divert_rows) + sum(1 for c in changes.values() if c["change"] == "KEPT")
     summary = ", ".join(f"{v} {k.lower()}" for k, v in counts.items() if v and k != "KEPT") or "no change needed"
     kp = res.kpis if res else {}
-    kpis = {"rung": rung, "changes": counts, "proposal_ms": ms, "missions": len(det.items) + len(det.new_missions),
-            "covered": len(det.items) + counts["NEW"] - counts["DROPPED"],
+    # coverage of the whole resulting plan, counted like a full plan (every mission in the horizon), not just the
+    # missions this re-task re-solved
+    flown = {r["mission_id"] for r in new_rows + divert_rows} | \
+            {i["mission_id"] for i in det.frozen if i["mission_id"] not in changes} | \
+            {r["mission_id"] for r in keep_rows.values() if r["mission_id"] not in changes}
+    flown -= {m for m, c in changes.items() if c["change"] == "DROPPED"}
+    every = set(st.missions) | flown | set(changes)
+    prio = dict(db.execute(text("SELECT id, priority FROM mission WHERE id = ANY(:i)"), {"i": list(every) or [0]}).all())
+    by = {p: {"of": sum(1 for m in every if prio.get(m) == p), "covered": sum(1 for m in flown if prio.get(m) == p)}
+          for p in D.PRIORITIES}
+    kpis = {"rung": rung, "changes": counts, "proposal_ms": ms, "missions": len(every), "covered": len(flown),
             "solve_ms": kp.get("solve_ms", 0), "solver_status": kp.get("solver_status", "SWAP"),
-            "by_priority": kp.get("by_priority", {}), "issues": [x[2] for x in det.issues][:12]}
+            "by_priority": by, "issues": [x[2] for x in det.issues][:12]}
     shell = P.PlanResult(st, items=new_rows + divert_rows, unmet=unmet, kpis=kpis, solver_status=kpis["solver_status"],
                          solve_ms=kpis["solve_ms"])
     pid = P.store(db, shell, preset="STABILITY", user=user, kind="RETASK", parent_plan_id=det.plan_id,
@@ -390,6 +400,13 @@ def propose(db: Session, det: Detection, user: dict | None = None, disruption_id
     carried = [i["id"] for i in det.frozen if i["mission_id"] not in changes] + \
               [iid for iid, r in keep_rows.items() if r["mission_id"] not in changes]
     store.copy_items(db, det.plan_id, pid, carried, "KEPT")
+    # what the plan in force could not cover stays uncovered unless this re-task covers it: carry it, so a proposal shows
+    # the whole picture and its "not covered" list matches its coverage count
+    db.execute(text("""INSERT INTO plan_unmet (plan_id, mission_id, reasons, fixes)
+                       SELECT :n, u.mission_id, u.reasons, u.fixes FROM plan_unmet u
+                       WHERE u.plan_id = :p AND u.mission_id = ANY(:open) AND NOT (u.mission_id = ANY(:flown))
+                         AND u.mission_id NOT IN (SELECT mission_id FROM plan_unmet WHERE plan_id = :n)"""),
+               {"n": pid, "p": det.plan_id, "open": list(st.missions) or [0], "flown": list(flown) or [0]})
     return {"plan_id": pid, "summary": summary, "rung": rung, "ms": ms, "changes": counts}
 
 

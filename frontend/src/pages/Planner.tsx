@@ -1,186 +1,181 @@
-// Planner (PHASE2_IMPLEMENTATION_PLAN §10.2): generate, explain, approve and commit plans; review re-task proposals;
-// what-if and COA comparison. Decision support only: nothing reaches the sorties without an audited commit.
+// Planner (PHASE2_IMPLEMENTATION_PLAN §10.2, ARCHITECTURE D55–D61). Situation cards; opening one walks it through four
+// steps (Situation → Plan → Decide → Mission, features/scenarioview.tsx). "Details & tools" (landing page only) holds the
+// expert views: every package and why, test an option (what-if and COA comparison), plan by hand, history.
+// Decision support only: nothing reaches the sorties without an audited commit.
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { Disruption, Fix, PlanItemView, PlanKpis, PlanListRow, PlanView, Priority, User } from "../api/types";
+import type { Fix, LiveScenario, PlanItemView, PlanKpis, PlanListRow, PlanView, Priority, User } from "../api/types";
 import { ErrorText, Loading, Modal, Pill, Row, Sim, ToneText } from "../components/ui";
 import { ManualTab } from "../features/manual";
-import { ChangePill, Explanation, PlanKpiStrip, PrioPill, Timeline, Unmet, hhmm } from "../features/ops";
-import { RANK, istTime, label, num } from "../lib/format";
+import { ChangePill, Explanation, PrioPill, Unmet, hhmm } from "../features/ops";
+import { PlannerFlow } from "../features/scenarioview";
+import { RANK, label, num } from "../lib/format";
 import { useStore } from "../store";
 
-type Tab = "plan" | "changes" | "whatif" | "coa" | "manual";
-const PRESET_LABEL: Record<string, string> = { BALANCED: "Balanced", MAX_COVERAGE: "Max coverage", MIN_RISK: "Min risk", MIN_FUEL: "Min fuel", STABILITY: "Stability" };
+type Tab = "packages" | "options" | "manual" | "history";
+const PRESET_LABEL: Record<string, string> = { BALANCED: "Balanced", MAX_COVERAGE: "Cover the most", MIN_RISK: "Lowest risk", MIN_FUEL: "Least fuel", STABILITY: "Fewest changes" };
+const PRESETS = ["BALANCED", "MAX_COVERAGE", "MIN_RISK", "MIN_FUEL"];
 const PRIOS: Priority[] = ["P1", "P2", "P3", "P4"];
+const STATE: Record<string, [string, string]> = {         // plan status -> pill status, plain word
+  COMMITTED: ["OPERATIONAL", "In force"], PROPOSED: ["WARNING", "Waiting for you"], APPROVED: ["WARNING", "Approved, not committed"],
+  SUPERSEDED: ["RETIRED", "Replaced"], REJECTED: ["RETIRED", "Rejected"], DRAFT: ["RETIRED", "Draft"],   // neutral tone
+};
+const SORTIE_WORD: Record<string, string> = { PLANNED: "Planned", CREWED: "Crewed", READY: "Ready", AIRBORNE: "Flying", ON_STATION: "On station",
+  RTB: "Returning", LANDED: "Landed", COMPLETED: "Done", CANCELLED: "Cancelled", ABORTED: "Aborted" };
+const short = (n: string | undefined) => (n ?? "").replace(/^Air Force Station /, "");
+const kindWord = (k: string) => (k === "RETASK" ? "Change to the plan" : k === "WHATIF" ? "What-if" : "Full plan");
+type PlanList = { items: PlanListRow[]; committed_id: number | null; pending_retask_id: number | null; pending_id: number | null };
 
 export function Planner({ user }: { user: User }) {
+  const [params, setParams] = useSearchParams();
+  const live = useQuery({ queryKey: ["scenarios", "live"], queryFn: () => api<LiveScenario[]>("/ops/scenarios/live"), refetchInterval: 5000 });
+  // old links (?view=plan, ?plan=, ?item=) open the tools; ?run= opens that situation's four steps
+  const tools = params.get("tools") === "1" || params.get("view") === "plan" || params.has("plan") || params.has("item");
+  return (
+    <div className="page">
+      <h1 className="page-title">Planner <Sim title="Plans are built from simulated data" />
+        <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>Decision support: a person approves every change</span></h1>
+      <PlannerFlow user={user} />
+      {!params.get("run") && <section className="tools">
+        <button className="tools-h" aria-expanded={tools} onClick={() => setParams(tools ? {} : { tools: "1" })}>
+          <span className={`chev${tools ? " open" : ""}`} aria-hidden>›</span><b>Details &amp; tools</b>
+          <span className="muted">every package and why · test an option · plan by hand · history</span></button>
+        {tools && <Tools user={user} live={live.data ?? []} />}
+      </section>}
+    </div>
+  );
+}
+
+function Tools({ user, live }: { user: User; live: LiveScenario[] }) {
   const qc = useQueryClient();
   const toast = useStore((s) => s.toast);
-  const simClock = useStore((s) => s.simClock);
-  const [params, setParams] = useSearchParams();
-  const [tab, setTab] = useState<Tab>("plan");
+  const [params, setParamsRaw] = useSearchParams();
+  const setParams = (p: Record<string, string>) => setParamsRaw({ tools: "1", ...p });   // keep the tools open
+  const [tab, setTab] = useState<Tab>("packages");
   const [preset, setPreset] = useState("BALANCED");
   const [sel, setSel] = useState<{ kind: "item" | "unmet"; id: number } | null>(params.get("item") ? { kind: "item", id: Number(params.get("item")) } : null);
   const canPlan = user.role === "ADMIN" || user.role === "COMMAND_HQ";
   const split = useMutation({                   // D42: apply a checked split fix to an uncovered mission
     mutationFn: ({ id, f }: { id: number; f: Fix }) => api<{ parts: { id: number; code: string }[] }>(`/ops/missions/${id}/split`,
       { method: "POST", body: { kind: f.kind, parts: f.parts, t0: f.t0, sizes: f.sizes ?? null } }),
-    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["missions"] }); toast(`Split into ${r.parts.map((x) => x.code).join(", ")}. Generate a new plan to cover them.`, "INFO"); },
+    onSuccess: (r) => { qc.invalidateQueries({ queryKey: ["missions"] }); toast(`Split into ${r.parts.map((x) => x.code).join(", ")}. Re-plan to cover them.`, "INFO"); },
     onError: (e) => toast(e instanceof ApiError ? e.message : "Split failed", "CRITICAL"),
   });
-  const list = useQuery({ queryKey: ["plans", "list"], queryFn: () => api<{ items: PlanListRow[]; committed_id: number | null; pending_retask_id: number | null }>("/ops/plans?limit=25"),
-    refetchInterval: 15000 });
+  const list = useQuery({ queryKey: ["plans", "list"], queryFn: () => api<PlanList>("/ops/plans?limit=25"), refetchInterval: 10000 });
   const want = params.get("plan");
-  const pid = want && want !== "current" ? Number(want)
-    : list.data?.pending_retask_id ?? list.data?.items.find((p) => p.status === "PROPOSED" && p.kind === "PLAN")?.id ?? list.data?.committed_id ?? list.data?.items[0]?.id;
-  const plan = useQuery({ queryKey: ["plan", pid], queryFn: () => api<PlanView>(`/ops/plans/${pid}`), enabled: !!pid, refetchInterval: 20000 });
+  // what the tools show: the proposal waiting for a decision, else the plan in force (History opens any other)
+  const pid = want && want !== "current" ? Number(want) : list.data?.pending_id ?? list.data?.committed_id ?? list.data?.items[0]?.id;
+  const plan = useQuery({ queryKey: ["plan", pid], queryFn: () => api<PlanView>(`/ops/plans/${pid}`), enabled: !!pid, refetchInterval: 15000 });
   const p = plan.data;
-  useEffect(() => { if (p && p.plan.kind === "RETASK" && p.plan.status === "PROPOSED") setTab((t) => (t === "plan" ? "changes" : t)); }, [p?.plan.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const invalidate = () => ["plans", "plan", "missions", "ops-summary", "ops-routes", "disruptions", "summary"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const invalidate = () => ["plans", "plan", "missions", "ops-summary", "ops-routes", "disruptions", "summary", "situation"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+  const open = (id: number | null) => { setParams(id ? { plan: String(id) } : {}); setSel(null); setTab("packages"); };
   const gen = useMutation({
     mutationFn: (pr: string) => api<{ plan_id: number; kpis: PlanKpis }>("/ops/plans", { method: "POST", body: { preset: pr } }),
     onSuccess: (r) => {
-      setParams({ plan: String(r.plan_id) });
-      setSel(null);
+      open(null);
       invalidate();
-      toast(`Plan #${r.plan_id}: ${r.kpis.covered} of ${r.kpis.missions} missions covered in ${num((r.kpis.total_ms ?? r.kpis.solve_ms) / 1000, 1)} s`, "INFO");
+      toast(`New plan proposed: ${r.kpis.covered} of ${r.kpis.missions} missions covered. Commit or reject it above.`, "INFO");
     },
     onError: (e) => toast(e instanceof ApiError ? e.message : "Planning failed", "CRITICAL"),
-  });
-  const act = useMutation({
-    // the plan id travels with the call: a closure could still hold the plan shown before the last "Generate"
-    mutationFn: ({ action, id }: { action: "approve" | "commit" | "reject"; id: number }) =>
-      api<{ ok: boolean; changes?: Record<string, number | string[]> }>(`/ops/plans/${id}/${action}`, { method: "POST" }),
-    onSuccess: (r, { action, id: pidDone }) => {
-      invalidate();
-      if (action === "commit" && r.changes) {
-        const counts = Object.entries(r.changes).filter(([, v]) => typeof v === "number" && v).map(([k, v]) => `${v} ${k.toLowerCase()}`).join(", ");
-        toast(`Plan #${pidDone} committed: ${counts || "no change"}`, "INFO");
-        // the world moved since the plan was made: say exactly what commit repaired or skipped
-        for (const n of ((r.changes.notes as string[]) ?? []).slice(0, 3)) toast(n, "WARNING");
-      } else toast(action === "approve" ? "Plan approved" : "Plan rejected", "INFO");
-    },
-    onError: (e) => toast(e instanceof ApiError ? e.message : "Failed", "CRITICAL"),
   });
 
   const item = sel?.kind === "item" ? p?.items.find((i) => i.id === sel.id) : undefined;
   const unmet = sel?.kind === "unmet" ? p?.unmet.find((u) => u.id === sel.id) : undefined;
-  const decidable = !!p && ["PROPOSED", "APPROVED"].includes(p.plan.status) && p.plan.kind !== "WHATIF" && canPlan;
-  const changes = useMemo(() => (p?.items ?? []).filter((i) => i.change && i.change !== "KEPT"), [p]);
+  const st = p?.plan.status ?? "";
+  const showing = !p ? "" : ["PROPOSED", "APPROVED"].includes(st) ? (p.plan.kind === "RETASK" ? "the change waiting for your decision" : "the new plan waiting for your decision")
+    : st === "COMMITTED" ? "the plan in force" : `an older ${kindWord(p.plan.kind).toLowerCase()} from ${hhmm(p.plan.created_at)} (${(STATE[st]?.[1] ?? label(st)).toLowerCase()})`;
 
   return (
-    <div className="page">
-      <h1 className="page-title">Planner <Sim title="Plans are built from simulated data" />
-        <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>Decision support: a person approves every change</span></h1>
-
-      <div className="toolbar">
-        <select className="select" aria-label="Plan" value={pid ?? ""} onChange={(e) => { setParams({ plan: e.target.value }); setSel(null); }}>
-          {(list.data?.items ?? []).map((r) => (
-            <option key={r.id} value={r.id}>#{r.id} {label(r.kind)} · {label(r.status)}{r.summary ? ` · ${r.summary}` : ""}</option>
-          ))}
-        </select>
-        {canPlan && <>
-          <select className="select" aria-label="Preset" value={preset} onChange={(e) => setPreset(e.target.value)} title="What the planner optimises after coverage">
-            {["BALANCED", "MAX_COVERAGE", "MIN_RISK", "MIN_FUEL"].map((x) => <option key={x} value={x}>{PRESET_LABEL[x]}</option>)}
-          </select>
-          <button className="btn btn-primary" disabled={gen.isPending} onClick={() => gen.mutate(preset)}>{gen.isPending ? "Planning…" : "Generate plan"}</button>
-        </>}
+    <div className="tools-body">
+      {list.isLoading && <Loading />}
+      {plan.error && <ErrorText error={plan.error} />}
+      <div className="tools-bar">
+        {p && <span className="muted">Showing {showing}{want && want !== "current" && <> · <a href="#" onClick={(e) => { e.preventDefault(); open(null); }}>back to the current plan</a></>}</span>}
+        {p && st === "COMMITTED" && <a className="btn btn-sm" href={`/planner/ato/${p.plan.id}`}>Air tasking order</a>}
         <span className="topbar-spacer" />
-        {decidable && <>
-          {p!.plan.status === "PROPOSED" && <button className="btn" disabled={act.isPending} onClick={() => act.mutate({ action: "approve", id: p!.plan.id })}>Approve</button>}
-          <button className="btn btn-primary" disabled={act.isPending} onClick={() => confirm(`Commit plan #${p!.plan.id}? Sorties will be created, moved or cancelled.`) && act.mutate({ action: "commit", id: p!.plan.id })}>
-            {p!.plan.kind === "RETASK" ? "Commit re-task" : "Commit plan"}</button>
-          <button className="btn btn-danger" disabled={act.isPending} onClick={() => act.mutate({ action: "reject", id: p!.plan.id })}>Reject</button>
+        {canPlan && <>
+          <select className="select" aria-label="Plan for" value={preset} onChange={(e) => setPreset(e.target.value)} title="What the planner prefers once every mission it can cover is covered">
+            {PRESETS.map((x) => <option key={x} value={x}>{PRESET_LABEL[x]}</option>)}
+          </select>
+          <button className="btn" disabled={gen.isPending} onClick={() => confirm("Plan everything still to fly from scratch? You get a proposal; nothing changes until you commit.") && gen.mutate(preset)}>
+            {gen.isPending ? "Planning…" : "Re-plan everything"}</button>
         </>}
       </div>
 
-      {list.data?.pending_retask_id && list.data.pending_retask_id !== pid && (
-        <div className="notice notice-warn" style={{ marginBottom: 12 }}>
-          <ToneText toneName="warning">Re-task proposal #{list.data.pending_retask_id} is waiting for a decision.</ToneText>{" "}
-          <a href="#" onClick={(e) => { e.preventDefault(); setParams({ plan: String(list.data!.pending_retask_id) }); }}>Review it</a>
-        </div>
-      )}
-      {list.isLoading && <Loading />}
-      {!pid && list.data && <div className="empty">No plans yet. {canPlan ? "Generate the first plan for the next 24 hours." : "Air HQ hasn't generated a plan yet."}</div>}
-      {plan.error && <ErrorText error={plan.error} />}
-
       {p && <>
-        <div className="plan-head">
-          <span><b>Plan #{p.plan.id}</b> · {label(p.plan.kind)} · <Pill status={p.plan.status === "COMMITTED" ? "OPERATIONAL" : p.plan.status === "PROPOSED" ? "PLANNED" : p.plan.status === "REJECTED" ? "CRITICAL" : "STANDBY"} text={label(p.plan.status)} /></span>
-          <span className="muted">Horizon {istTime(p.plan.horizon_start, true)} – {istTime(p.plan.horizon_end, true)} (simulated time) · preset {PRESET_LABEL[p.plan.preset] ?? p.plan.preset}</span>
-          {p.plan.committed_at && <span className="muted">committed {istTime(p.plan.committed_at, true)}</span>}
-          {p.plan.kind !== "WHATIF" && user.role !== "VIEWER" && <a className="btn btn-sm" href={`/planner/ato/${p.plan.id}`}>Air tasking order</a>}
-        </div>
-        <PlanKpiStrip k={p.plan.kpis} extra={p.plan.kind === "RETASK" && p.plan.kpis.changes ? (
-          <div className="kpi"><div className="kpi-label">Re-task</div><div className="kpi-value" style={{ fontSize: 15 }}>{p.plan.summary}</div>
-            <div className="kpi-sub">{label(p.plan.kpis.rung)} · proposed in {num((p.plan.kpis.proposal_ms ?? 0) / 1000, 1)} s</div></div>) : undefined} />
-
-        <div className="tabs" role="tablist" style={{ marginTop: 16 }}>
-          {([["plan", "Plan"], ["changes", `Changes${changes.length || p.unmet.some((u) => u.dropped_item_id) ? ` (${changes.length + p.unmet.filter((u) => u.dropped_item_id).length})` : ""}`],
-            ["whatif", "What-if"], ["coa", "Compare COAs"], ["manual", "Manual baseline"]] as [Tab, string][]).map(([k, n]) => (
+        <div className="tabs" role="tablist">
+          {([["packages", `Every package (${p.items.length}${p.unmet.length ? ` · ${p.unmet.length} not covered` : ""})`], ["options", "Test an option"],
+            ["manual", "Plan by hand"], ["history", "History"]] as [Tab, string][]).map(([k, n]) => (
             <button key={k} role="tab" aria-selected={tab === k} className={`tab${tab === k ? " on" : ""}`} onClick={() => setTab(k)}>{n}</button>
           ))}
         </div>
 
-        {tab === "plan" && (
-          <div className="planner-grid">
-            <MissionColumn p={p} sel={sel} onSel={setSel} />
-            <div style={{ minWidth: 0 }}>
-              <Timeline items={p.items} start={p.plan.horizon_start} end={p.plan.horizon_end} selected={item?.id ?? null}
-                onSelect={(id) => setSel({ kind: "item", id })} now={simClock?.sim_now} />
-              {p.items.length === 0 && <div className="empty">No packages in this plan.</div>}
-            </div>
+        {tab === "packages" && (
+          <div className="planner-grid two">
+            <Packages p={p} sel={sel} onSel={setSel} />
             <aside className="plan-detail">
-              {!sel && <div className="empty">Select a package or an uncovered mission to see why.</div>}
+              {!sel && <div className="empty">Pick a package to see why the planner chose it, or a mission that isn't covered to see what would fix it.</div>}
               {item && <ItemDetail it={item} plan={p} user={user} />}
               {unmet && <>
-                <div className="detail-title"><PrioPill p={unmet.mission.priority} /> <span className="mono">{unmet.mission.code}</span>
+                <div className="detail-title"><PrioPill p={unmet.mission.priority} /> {unmet.mission.name}
                   {unmet.dropped_item_id ? <ChangePill c="DROPPED" /> : <ToneText toneName="caution">Not covered</ToneText>}</div>
-                <div className="muted" style={{ marginBottom: 6 }}>{unmet.mission.name}</div>
+                <div className="muted" style={{ marginBottom: 8 }}><span className={`tag${unmet.mission.exercise_run_id ? " scn" : ""}`}>{unmet.mission.tag}</span>{" "}
+                  <span className="mono dim">{unmet.mission.code.replace(/^SIM-/, "")}</span></div>
                 <Unmet m={unmet.mission} reasons={unmet.reasons} fixes={unmet.fixes} busy={split.isPending}
-                  onApply={canPlan ? (f) => confirm(`${f.text}?\n\nThis replaces ${unmet.mission.code} with ${f.parts} missions. Generate a new plan afterwards.`)
+                  onApply={canPlan ? (f) => confirm(`${f.text}?\n\nThis replaces ${unmet.mission.code} with ${f.parts} missions. Re-plan afterwards.`)
                     && split.mutate({ id: unmet.mission.id, f }) : undefined} />
               </>}
             </aside>
           </div>
         )}
-        {tab === "changes" && <ChangesTab p={p} changes={changes} canPlan={canPlan} onSel={(id) => { setSel({ kind: "item", id }); setTab("plan"); }} />}
-        {tab === "whatif" && <WhatIf canPlan={canPlan} />}
-        {tab === "coa" && <Coa canPlan={canPlan} />}
+        {tab === "options" && <TestOption canPlan={canPlan} live={live} />}
         {tab === "manual" && <ManualTab canPlan={canPlan} />}
+        {tab === "history" && <History rows={list.data?.items ?? []} shown={pid} canPlan={canPlan} onOpen={open} />}
       </>}
     </div>
   );
 }
 
-function MissionColumn({ p, sel, onSel }: { p: PlanView; sel: { kind: string; id: number } | null; onSel: (s: { kind: "item" | "unmet"; id: number }) => void }) {
+/** Packages grouped by who asked for them: not covered first, then each scenario, then routine tasking. */
+function Packages({ p, sel, onSel }: { p: PlanView; sel: { kind: string; id: number } | null; onSel: (s: { kind: "item" | "unmet"; id: number }) => void }) {
+  const retask = p.plan.kind === "RETASK";
+  const groups = useMemo(() => {
+    const by = new Map<string, PlanItemView[]>();
+    for (const i of p.items) by.set(i.mission.tag, [...(by.get(i.mission.tag) ?? []), i]);
+    const rank = (i: PlanItemView) => (retask && i.change && i.change !== "KEPT" ? 0 : 1);
+    return [...by.entries()].sort(([a], [b]) => (a === "Routine" ? 1 : b === "Routine" ? -1 : a.localeCompare(b)))
+      .map(([tag, xs]) => [tag, [...xs].sort((a, b) => rank(a) - rank(b) || PRIOS.indexOf(a.mission.priority) - PRIOS.indexOf(b.mission.priority)
+        || a.launch_ts.localeCompare(b.launch_ts))] as [string, PlanItemView[]]);
+  }, [p, retask]);
+  const un = [...p.unmet].sort((a, b) => PRIOS.indexOf(a.mission.priority) - PRIOS.indexOf(b.mission.priority));
   return (
     <div className="mission-col">
-      {PRIOS.map((pr) => {
-        const items = p.items.filter((i) => i.mission.priority === pr);
-        const un = p.unmet.filter((u) => u.mission.priority === pr);
-        if (!items.length && !un.length) return null;
-        return (
-          <div key={pr}>
-            <div className="col-h"><PrioPill p={pr} /> <span className="dim mono">{items.length}/{items.length + un.length}</span></div>
-            {un.map((u) => (
-              <button key={`u${u.id}`} className={`mission-row unmet${sel?.kind === "unmet" && sel.id === u.id ? " on" : ""}`} onClick={() => onSel({ kind: "unmet", id: u.id })}>
-                <span className="mono">{u.mission.code.replace(/^SIM-/, "")}</span>
-                <span className="s-caution" style={{ fontSize: 11 }}>▲ {u.dropped_item_id ? "dropped" : u.reasons[0]?.text ?? "not covered"}</span>
-              </button>
-            ))}
-            {items.map((i) => (
-              <button key={i.id} className={`mission-row${sel?.kind === "item" && sel.id === i.id ? " on" : ""}`} onClick={() => onSel({ kind: "item", id: i.id })}>
-                <span className="mono">{i.mission.code.replace(/^SIM-/, "")}</span>
-                <span className="dim" style={{ fontSize: 11 }}>{i.n_aircraft} × {i.type.name} · {i.base.code} {hhmm(i.launch_ts)}{i.support ? " + tanker" : ""}{i.change && i.change !== "KEPT" ? ` · ${label(i.change)}` : ""}</span>
-              </button>
-            ))}
-          </div>
-        );
-      })}
+      {un.length > 0 && <>
+        <div className="col-h"><span className="s-caution">▲ Not covered</span><span className="dim mono">{un.length}</span></div>
+        {un.map((u) => (
+          <button key={`u${u.id}`} className={`mission-row unmet${sel?.kind === "unmet" && sel.id === u.id ? " on" : ""}`} onClick={() => onSel({ kind: "unmet", id: u.id })}>
+            <span className="top"><span><PrioPill p={u.mission.priority} /> {u.mission.name}</span>{u.mission.exercise_run_id ? <span className="tag scn">{u.mission.tag}</span> : null}</span>
+            <span className="s-caution" style={{ fontSize: 11 }}>{u.dropped_item_id ? "dropped by this change" : u.reasons[0]?.text ?? "no package fits"}</span>
+          </button>
+        ))}
+      </>}
+      {groups.map(([tag, xs]) => (
+        <div key={tag}>
+          <div className="col-h"><span className={tag === "Routine" ? "" : "s-warning"}>{tag === "Routine" ? "Routine tasking" : tag}</span><span className="dim mono">{xs.length}</span></div>
+          {xs.map((i) => (
+            <button key={i.id} className={`mission-row${sel?.kind === "item" && sel.id === i.id ? " on" : ""}`} onClick={() => onSel({ kind: "item", id: i.id })}>
+              <span className="top"><span><PrioPill p={i.mission.priority} /> {i.mission.name}</span>
+                {retask && i.change && i.change !== "KEPT" ? <ChangePill c={i.change} />
+                  : <span className="st">{i.sortie ? SORTIE_WORD[i.sortie.status] ?? label(i.sortie.status) : retask ? "Unchanged" : "Proposed"}</span>}</span>
+              <span className="dim" style={{ fontSize: 11 }}>{i.n_aircraft} × {i.type.name} · {short(i.base.name)} · {hhmm(i.launch_ts)}{i.support ? " · with tanker" : ""}</span>
+            </button>
+          ))}
+        </div>
+      ))}
+      {!p.items.length && !un.length && <div className="empty">No packages in this plan.</div>}
     </div>
   );
 }
@@ -189,31 +184,34 @@ function ItemDetail({ it, plan, user }: { it: PlanItemView; plan: PlanView; user
   const [swap, setSwap] = useState(false);
   const canSwap = ["PROPOSED", "APPROVED"].includes(plan.plan.status) && (user.role === "ADMIN" || (user.role === "BASE_COMMANDER" && user.base_id === it.base.id));
   const w = it.score?.weapons ?? {};
+  const back = it.recovery_base && it.recovery_base.id !== it.base.id ? ` at ${short(it.recovery_base.name)}` : "";
   return (
     <>
-      <div className="detail-title"><PrioPill p={it.mission.priority} /> <span className="mono">{it.mission.code}</span> <ChangePill c={it.change} /></div>
-      <div className="muted" style={{ marginBottom: 6 }}>{it.mission.name}</div>
-      <Row label="Package" value={`${it.n_aircraft} × ${it.type.name}`} extra={<span className="mono">{it.base.code}</span>} />
-      <Row label="Launch · on station · recover" value={`${hhmm(it.launch_ts)} · ${hhmm(it.on_station_ts)} · ${hhmm(it.recovery_ts)}`} />
-      {it.recovery_base && it.recovery_base.id !== it.base.id && <Row label="Recovers at" value={<ToneText toneName="warning">{it.recovery_base.code}</ToneText>} />}
-      <Row label="Tails" value={<span className="mono">{it.aircraft.map((a) => a.tail_no).join(", ")}</span>}
-        extra={it.score?.snag ? <span className="dim" style={{ fontSize: 11 }}>
-          predicted defect risk {it.aircraft.map((a) => `${Math.round(100 * (it.score!.snag!.tails[a.tail_no] ?? 0))}%`).join(" · ")}</span> : undefined} />
-      {it.crew.map((c) => <Row key={c.id} label={label(c.position)} value={`${RANK[c.rank] ?? c.rank} ${c.name}`} extra={c.callsign ? <span className="mono dim">{c.callsign}</span> : undefined} />)}
-      {it.support && <>
-        <h4 className="section-h" style={{ fontSize: 13 }}>Air-to-air refuelling</h4>
+      <div className="detail-title"><PrioPill p={it.mission.priority} /> {it.mission.name} {it.change && it.change !== "KEPT" && <ChangePill c={it.change} />}</div>
+      <div className="muted" style={{ marginBottom: 8 }}><span className={`tag${it.mission.exercise_run_id ? " scn" : ""}`}>{it.mission.tag}</span>{" "}
+        <span className="mono dim">{it.mission.code.replace(/^SIM-/, "")}</span>{it.sortie && <> · {SORTIE_WORD[it.sortie.status] ?? label(it.sortie.status)}</>}</div>
+      <p className="pk-say">{it.n_aircraft} × {it.type.name} from {short(it.base.name)}: launch {hhmm(it.launch_ts)}
+        {it.on_station_ts ? `, on station ${hhmm(it.on_station_ts)}` : ""}, back{back} {hhmm(it.recovery_ts)} IST.
+        {it.support ? ` A ${it.support.type?.name ?? "tanker"} from ${short(it.support.base?.name)} refuels it at ${hhmm(it.support.rv_start)}.` : ""}</p>
+      {canSwap && <div className="toolbar" style={{ marginBottom: 8 }}><button className="btn btn-sm" onClick={() => setSwap(true)}>Swap tails or crew</button></div>}
+      <h4 className="section-h" style={{ fontSize: 14 }}>Why this package</h4>
+      <Explanation it={it} />
+      <details className="pk-more"><summary>Tails and crew</summary>
+        <Row label="Tails" value={<span className="mono">{it.aircraft.map((a) => a.tail_no).join(", ")}</span>}
+          extra={it.score?.snag ? <span className="dim" style={{ fontSize: 11 }}>
+            predicted defect risk {it.aircraft.map((a) => `${Math.round(100 * (it.score!.snag!.tails[a.tail_no] ?? 0))}%`).join(" · ")}</span> : undefined} />
+        {it.crew.map((c) => <Row key={c.id} label={label(c.position)} value={`${RANK[c.rank] ?? c.rank} ${c.name}`} extra={c.callsign ? <span className="mono dim">{c.callsign}</span> : undefined} />)}
+        {Object.keys(w).length > 0 && <Row label="Weapons (generic)" value={Object.entries(w).map(([k, v]) => `${v} ${k.replace("ARMAMENT_", "").replace(/_/g, "-")}`).join(", ")} />}
+        {it.sortie && <Row label="Sortie" value={<><span className="mono">{it.sortie.code}</span> <Pill status={it.sortie.status} /></>} />}
+      </details>
+      {it.support && <details className="pk-more"><summary>Tanker</summary>
         <Row label="Tanker" value={`1 × ${it.support.type?.name ?? "tanker"}`} extra={<span className="mono">{it.support.base?.code}</span>} />
         <Row label="Launch · on track · recover" value={`${hhmm(it.support.launch_ts)} · ${hhmm(it.support.rv_start)}–${hhmm(it.support.rv_end)} · ${hhmm(it.support.recovery_ts)}`} />
         <Row label="Refuelling point" value={<span className="mono">{it.support.rv[1].toFixed(2)}, {it.support.rv[0].toFixed(2)}</span>} />
         <Row label="Tanker tail" value={<span className="mono">{it.support.aircraft.map((a) => a.tail_no).join(", ")}</span>} />
         {it.support.crew.filter((c) => c.position === "CAPTAIN").map((c) => <Row key={c.id} label="Tanker captain" value={`${RANK[c.rank] ?? c.rank} ${c.name}`} />)}
         {it.support.sortie && <Row label="Tanker sortie" value={<><span className="mono">{it.support.sortie.code}</span> <Pill status={it.support.sortie.status} /></>} />}
-      </>}
-      {Object.keys(w).length > 0 && <Row label="Weapons (generic)" value={Object.entries(w).map(([k, v]) => `${v} ${k.replace("ARMAMENT_", "").replace(/_/g, "-")}`).join(", ")} />}
-      {it.sortie && <Row label="Sortie" value={<><span className="mono">{it.sortie.code}</span> <Pill status={it.sortie.status} /></>} />}
-      {canSwap && <div className="toolbar" style={{ marginTop: 8 }}><button className="btn btn-sm" onClick={() => setSwap(true)}>Swap tails or crew</button></div>}
-      <h4 className="section-h" style={{ fontSize: 14 }}>Why this package</h4>
-      <Explanation it={it} />
+      </details>}
       {swap && <SwapModal it={it} planId={plan.plan.id} onClose={() => setSwap(false)} />}
     </>
   );
@@ -270,56 +268,46 @@ function SwapModal({ it, planId, onClose }: { it: PlanItemView; planId: number; 
   );
 }
 
-function ChangesTab({ p, changes, canPlan, onSel }: { p: PlanView; changes: PlanItemView[]; canPlan: boolean; onSel: (id: number) => void }) {
+/** Every plan, newest first, with what made it: the replacement for the disruptions table. */
+function History({ rows, shown, canPlan, onOpen }: { rows: PlanListRow[]; shown: number | undefined; canPlan: boolean; onOpen: (id: number) => void }) {
   const qc = useQueryClient();
   const toast = useStore((s) => s.toast);
-  const d = useQuery({ queryKey: ["disruptions"], queryFn: () => api<Disruption[]>("/ops/disruptions?limit=40"), refetchInterval: 15000 });
   const check = useMutation({
-    mutationFn: () => api<{ disruptions: unknown[]; proposal: { plan_id: number; summary: string } | null }>("/ops/disruptions/check", { method: "POST" }),
+    mutationFn: () => api<{ proposal: { plan_id: number; summary: string } | null }>("/ops/disruptions/check", { method: "POST" }),
     onSuccess: (r) => {
-      ["disruptions", "plans"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-      toast(r.proposal ? `Re-task proposal #${r.proposal.plan_id}: ${r.proposal.summary}` : "The committed plan still holds: nothing to re-task.", "INFO");
+      ["disruptions", "plans", "situation"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+      toast(r.proposal ? `A change to the plan is proposed: ${r.proposal.summary}. Decide on it at the top.` : "The plan in force still holds: nothing to change.", "INFO");
     },
     onError: (e) => toast(e instanceof ApiError ? e.message : "Check failed", "CRITICAL"),
   });
-  const dropped = p.unmet.filter((u) => u.dropped_item_id);
   return (
-    <div className="grid-2">
-      <div>
-        <h3 className="section-h">This plan's changes {p.plan.kind === "RETASK" && <span className="muted" style={{ fontSize: 12 }}>vs plan #{p.plan.parent_plan_id}</span>}</h3>
-        {p.plan.kind !== "RETASK" && <div className="empty">This is a full plan. Re-task proposals list their changes here.</div>}
-        {p.plan.kind === "RETASK" && p.plan.kpis.issues && <div className="notice" style={{ marginBottom: 8 }}>
-          {p.plan.kpis.issues.slice(0, 5).map((x) => <div key={x}>◆ {x}</div>)}</div>}
-        {changes.map((i) => (
-          <Row key={i.id} onClick={() => onSel(i.id)} label={<><PrioPill p={i.mission.priority} /> <span className="mono">{i.mission.code.replace(/^SIM-/, "")}</span></>}
-            extra={<span className="dim" style={{ fontSize: 11 }}>{i.n_aircraft} × {i.type.name} {i.base.code} {hhmm(i.launch_ts)}</span>} value={<ChangePill c={i.change} />} />
-        ))}
-        {dropped.map((u) => (
-          <Row key={u.id} label={<><PrioPill p={u.mission.priority} /> <span className="mono">{u.mission.code.replace(/^SIM-/, "")}</span></>}
-            extra={<span className="dim" style={{ fontSize: 11 }}>{u.reasons[0]?.text}</span>} value={<ChangePill c="DROPPED" />} />
-        ))}
-        {p.plan.kind === "RETASK" && !changes.length && !dropped.length && <div className="empty">No packages change.</div>}
+    <div>
+      <div className="toolbar" style={{ marginBottom: 8 }}>
+        <span className="muted" style={{ fontSize: 12 }}>The plan in force is re-checked against the live (simulated) picture every 12 s. When a rule breaks, the planner proposes a change at the top of the page.</span>
+        <span className="topbar-spacer" />
+        {canPlan && <button className="btn btn-sm" disabled={check.isPending} onClick={() => check.mutate()}>{check.isPending ? "Checking…" : "Re-check now"}</button>}
       </div>
-      <div>
-        <h3 className="section-h">Disruptions {canPlan && <button className="btn btn-sm" disabled={check.isPending} onClick={() => check.mutate()}>{check.isPending ? "Checking…" : "Check the plan now"}</button>}</h3>
-        <div className="muted" style={{ fontSize: 12, marginBottom: 6 }}>The plan is re-checked every 12 s against live (simulated) data. A broken rule becomes a disruption and a re-task proposal.</div>
-        <div className="table-wrap" style={{ maxHeight: 420 }}>
-          <table className="table" style={{ fontSize: 12 }}>
-            <thead><tr><th>Sim time</th><th>What</th><th>Status</th><th className="right">Proposal</th></tr></thead>
-            <tbody>{(d.data ?? []).map((x) => (
-              <tr key={x.id}><td className="mono">{hhmm(x.ts)}</td><td style={{ whiteSpace: "normal", maxWidth: 320 }}>{x.message} <span className="dim">{label(x.kind)}</span></td>
-                <td><Pill status={x.status === "RESOLVED" ? "OPERATIONAL" : x.status === "IGNORED" ? "OFF" : "WARNING"} text={label(x.status)} /></td>
-                <td className="num">{x.proposal_plan_id ? <a href={`/planner?plan=${x.proposal_plan_id}`}>#{x.proposal_plan_id}</a> : "—"}{x.proposal_ms != null && <span className="dim"> {num(x.proposal_ms / 1000, 1)} s</span>}</td></tr>
-            ))}</tbody>
-          </table>
-          {d.data?.length === 0 && <div className="empty" style={{ padding: 12 }}>No disruptions yet.</div>}
-        </div>
+      <div className="table-wrap">
+        <table className="table">
+          <thead><tr><th>Time (IST)</th><th>Plan</th><th>Why</th><th>Result</th><th>State</th></tr></thead>
+          <tbody>{rows.filter((r) => r.kind !== "WHATIF").map((r) => (
+            <tr key={r.id} className={`clickable${r.id === shown ? " on" : ""}`} onClick={() => onOpen(r.id)}>
+              <td className="mono">{hhmm(r.created_at)}</td>
+              <td>{kindWord(r.kind)}</td>
+              <td style={{ whiteSpace: "normal" }}>{r.why ?? <span className="muted">{r.kind === "RETASK" ? "re-plan of every package still to fly"
+                : `full plan for the next 24 hours${r.created_by ? `, by ${r.created_by}` : ""}`}</span>}</td>
+              <td style={{ whiteSpace: "normal" }}>{r.kind === "RETASK" ? r.summary : r.kpis ? `${r.kpis.covered} of ${r.kpis.missions} covered` : r.summary}</td>
+              <td><Pill status={STATE[r.status]?.[0] ?? "RETIRED"} text={STATE[r.status]?.[1] ?? label(r.status)} /></td>
+            </tr>
+          ))}</tbody>
+        </table>
+        {!rows.length && <div className="empty" style={{ padding: 12 }}>No plans yet.</div>}
       </div>
     </div>
   );
 }
 
-// ---------------------------------------------------------------- what-if and COA comparison
+// ---------------------------------------------------------------- test an option (what-if and COA comparison in one)
 interface Run { label: string; preset: string; kpis: PlanKpis; items: Record<string, { base: string; type: string; launch: string; priority: string }>;
   unmet: { code: string; priority: Priority; name: string; reason: string; example: string; fix: string }[] }
 interface Compare { runs: Run[]; notes: string[]; changed: string[] }
@@ -330,18 +318,21 @@ const DEFAULTS: Record<string, Record<string, string | number>> = {
   MISSION_SURGE: { factor: 1.5 }, FUEL_DELAY: { base: "VEHX", loss_pct: 50 }, BASE_ATTACK: { base: "VIHX", hours: 12, damage: 0.3 },
 };
 
-function CompareTable({ c }: { c: Compare }) {
+function CompareTable({ c, withChange }: { c: Compare; withChange: boolean }) {
+  const name = (r: Run) => (r.label === "Baseline" ? "Without the change" : r.label === "What-if" ? `With the change (${PRESET_LABEL[r.preset] ?? r.preset})`
+    : `${PRESET_LABEL[r.preset] ?? r.label}${withChange ? ", with the change" : ""}`);
   const rows: [string, (k: PlanKpis) => string][] = [
-    ["Missions covered", (k) => `${k.covered} / ${k.missions}`], ...PRIOS.map((p): [string, (k: PlanKpis) => string] => [`${p} covered`, (k) => `${k.by_priority[p]?.covered ?? 0} / ${k.by_priority[p]?.of ?? 0}`]),
-    ["Sorties", (k) => num(k.sorties)], ["Flying hours", (k) => num(k.flying_hours, 0)], ["ATF planned", (k) => `${num((k.fuel_l ?? 0) / 1000, 0)} kL`],
-    ["Peak route risk", (k) => num(k.risk_peak, 2)], ["Solve time", (k) => `${num((k.total_ms ?? k.solve_ms) / 1000, 1)} s`],
+    ["Missions covered", (k) => `${k.covered} of ${k.missions}`], ["P1 covered", (k) => `${k.by_priority.P1?.covered ?? 0} of ${k.by_priority.P1?.of ?? 0}`],
+    ["P2 covered", (k) => `${k.by_priority.P2?.covered ?? 0} of ${k.by_priority.P2?.of ?? 0}`], ["Sorties", (k) => num(k.sorties)],
+    ["Fuel (ATF)", (k) => `${num((k.fuel_l ?? 0) / 1000, 0)} kL`], ["Highest route risk", (k) => num(k.risk_peak, 2)],
   ];
+  const last = c.runs[c.runs.length - 1];
   return (
     <>
       {c.notes.length > 0 && <div className="notice" style={{ margin: "8px 0" }}>{c.notes.map((n) => <div key={n}>◆ {n}</div>)}</div>}
       <div className="table-wrap" style={{ marginTop: 8 }}>
         <table className="table">
-          <thead><tr><th>Simulated outcome</th>{c.runs.map((r) => <th key={r.label} className="right">{r.label}</th>)}</tr></thead>
+          <thead><tr><th>Simulated outcome</th>{c.runs.map((r) => <th key={r.label} className="right">{name(r)}</th>)}</tr></thead>
           <tbody>{rows.map(([n, f]) => (
             <tr key={n}><td>{n}</td>{c.runs.map((r, i) => {
               const v = f(r.kpis), base = f(c.runs[0].kpis);
@@ -350,27 +341,34 @@ function CompareTable({ c }: { c: Compare }) {
           ))}</tbody>
         </table>
       </div>
-      {c.changed.length > 0 && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Packages that change base: {c.changed.map((x) => x.replace(/^SIM-/, "")).join(", ")}</div>}
-      <h4 className="section-h" style={{ fontSize: 14 }}>Uncovered in "{c.runs[c.runs.length - 1].label}"</h4>
-      {c.runs[c.runs.length - 1].unmet.map((u) => (
-        <Row key={u.code} label={<><PrioPill p={u.priority} /> <span className="mono">{u.code.replace(/^SIM-/, "")}</span></>}
-          extra={<span className="dim" style={{ fontSize: 11 }}>{u.reason}{u.example ? `: ${u.example}` : ""}</span>} value={u.fix ? <span className="s-info" style={{ fontSize: 11 }}>○ {u.fix}</span> : ""} />
-      ))}
+      {c.changed.length > 0 && <div className="muted" style={{ fontSize: 12, marginTop: 6 }}>Packages that move to another base: {c.changed.map((x) => x.replace(/^SIM-/, "")).join(", ")}</div>}
+      {last.unmet.length > 0 && <>
+        <h4 className="section-h" style={{ fontSize: 14 }}>Not covered in "{name(last)}"</h4>
+        {last.unmet.map((u) => (
+          <Row key={u.code} label={<><PrioPill p={u.priority} /> {u.name}</>}
+            extra={<span className="dim" style={{ fontSize: 11 }}>{u.reason}{u.example ? `: ${u.example}` : ""}</span>} value={u.fix ? <span className="s-info" style={{ fontSize: 11 }}>○ {u.fix}</span> : ""} />
+        ))}
+      </>}
     </>
   );
 }
 
-function WhatIf({ canPlan }: { canPlan: boolean }) {
+/** What-if and course-of-action comparison in one: optionally change the picture, plan it one to three ways, compare. */
+function TestOption({ canPlan, live }: { canPlan: boolean; live: LiveScenario[] }) {
   const meta = useQuery({ queryKey: ["whatif-meta"], queryFn: () => api<{ deltas: Record<string, string>; presets: string[]; types: string[]; bases: string[] }>("/ops/whatif/meta"), staleTime: Infinity });
-  const [deltas, setDeltas] = useState<Delta[]>([{ kind: "GROUND_TYPE", params: { ...DEFAULTS.GROUND_TYPE } }]);
+  const [deltas, setDeltas] = useState<Delta[]>([]);
+  const [presets, setPresets] = useState<string[]>(["BALANCED"]);
   const run = useMutation({ mutationFn: () => api<Compare>("/ops/whatif", { method: "POST", body: { deltas: deltas.map((d) => ({
     kind: d.kind, params: { ...d.params, ...(typeof d.params.bases === "string" ? { bases: String(d.params.bases).split(",").map((x) => x.trim()).filter(Boolean) } : {}) } })),
-    presets: ["BALANCED"] } }) });
-  if (!canPlan) return <div className="empty">What-if analysis is for Air HQ, command HQ and the directing staff.</div>;
+    presets } }) });
+  if (!canPlan) return <div className="empty">Testing options is for Air HQ and the directing staff.</div>;
   const set = (i: number, k: string, v: string) => setDeltas(deltas.map((d, j) => (j === i ? { ...d, params: { ...d.params, [k]: v } } : d)));
+  const ready = deltas.length > 0 || presets.length > 1;
   return (
-    <div>
-      <div className="muted" style={{ marginBottom: 8 }}>Change the picture, re-plan, compare. Runs on a copy: nothing is written.</div>
+    <div className="opt">
+      <p className="muted" style={{ marginTop: 0 }}>Try something before it happens. The planner re-plans a copy of today's picture{live.length ? ` (with ${live.map((r) => r.name).join(", ")} live)` : ""} and
+        shows what it would cover. Nothing is written.</p>
+      <h4 className="section-h" style={{ fontSize: 14 }}>1 · What if… <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>optional</span></h4>
       {deltas.map((d, i) => (
         <div key={i} className="delta-row">
           <select className="select" value={d.kind} onChange={(e) => setDeltas(deltas.map((x, j) => (j === i ? { kind: e.target.value, params: { ...DEFAULTS[e.target.value] } } : x)))}>
@@ -387,32 +385,20 @@ function WhatIf({ canPlan }: { canPlan: boolean }) {
           <button className="close" aria-label="Remove" onClick={() => setDeltas(deltas.filter((_, j) => j !== i))}>×</button>
         </div>
       ))}
-      <div className="toolbar" style={{ marginTop: 8 }}>
-        <button className="btn btn-sm" onClick={() => setDeltas([...deltas, { kind: "CLOSE_RUNWAY", params: { ...DEFAULTS.CLOSE_RUNWAY } }])}>Add change</button>
-        <button className="btn btn-primary" disabled={run.isPending || !deltas.length} onClick={() => run.mutate()}>{run.isPending ? "Re-planning…" : "Run what-if"}</button>
-      </div>
-      {run.error && <ErrorText error={run.error} />}
-      {run.data && <CompareTable c={run.data} />}
-    </div>
-  );
-}
-
-function Coa({ canPlan }: { canPlan: boolean }) {
-  const [presets, setPresets] = useState<string[]>(["BALANCED", "MIN_RISK"]);
-  const run = useMutation({ mutationFn: () => api<Compare>("/ops/whatif", { method: "POST", body: { deltas: [], presets } }) });
-  if (!canPlan) return <div className="empty">Course-of-action comparison is for Air HQ, command HQ and the directing staff.</div>;
-  return (
-    <div>
-      <div className="muted" style={{ marginBottom: 8 }}>The same picture planned with different priorities after coverage. Pick two or three.</div>
+      <button className="btn btn-sm" style={{ marginTop: 6 }} onClick={() => setDeltas([...deltas, { kind: "CLOSE_RUNWAY", params: { ...DEFAULTS.CLOSE_RUNWAY } }])}>Add a change</button>
+      <h4 className="section-h" style={{ fontSize: 14 }}>2 · Plan it as <span className="muted" style={{ fontWeight: 400, fontSize: 12 }}>pick up to three to compare</span></h4>
       <div className="toolbar">
-        {["BALANCED", "MAX_COVERAGE", "MIN_RISK", "MIN_FUEL"].map((x) => (
+        {PRESETS.map((x) => (
           <label key={x} className="check"><input type="checkbox" checked={presets.includes(x)}
             onChange={() => setPresets(presets.includes(x) ? presets.filter((y) => y !== x) : [...presets, x].slice(-3))} /> {PRESET_LABEL[x]}</label>
         ))}
-        <button className="btn btn-primary" disabled={run.isPending || presets.length < 2} onClick={() => run.mutate()}>{run.isPending ? "Planning…" : "Compare"}</button>
+        <span className="topbar-spacer" />
+        <button className="btn btn-primary" disabled={run.isPending || !ready || !presets.length} onClick={() => run.mutate()}
+          title={ready ? undefined : "Add a change, or pick two ways to plan"}>{run.isPending ? "Re-planning…" : "Run"}</button>
       </div>
+      {!ready && <div className="muted" style={{ fontSize: 12 }}>Add a change, or pick two ways to plan, then Run.</div>}
       {run.error && <ErrorText error={run.error} />}
-      {run.data && <CompareTable c={run.data} />}
+      {run.data && <CompareTable c={run.data} withChange={deltas.length > 0} />}
     </div>
   );
 }

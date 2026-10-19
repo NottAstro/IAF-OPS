@@ -310,23 +310,28 @@ def store(db: Session, res: PlanResult, *, preset: str, user: dict | None, kind:
     db.add(p)
     db.flush()
     for it in res.items:
-        ch = (changes or {}).get(it["mission_id"], {})
-        db.add(M.PlanItem(plan_id=p.id, mission_id=it["mission_id"], base_id=it["base_id"],
-                          recovery_base_id=it["recovery_base_id"], aircraft_type_id=it["aircraft_type_id"],
-                          loadout_code=it["loadout_code"], launch_ts=it["launch_ts"], on_station_ts=it["on_station_ts"],
-                          recovery_ts=it["recovery_ts"], n_aircraft=it["n_aircraft"], aircraft_ids=it["aircraft_ids"],
-                          aircrew_ids=it["aircrew_ids"], crew_positions=it["crew_positions"],
-                          route_geom=from_shape(LineString([tuple(x) for x in it["route"]]), srid=4326) if len(it["route"]) > 1 else None,
-                          risk=it["risk"], fuel_l=it["fuel_l"], score=S.to_json(it["score"]),
-                          explanation=S.to_json(it["explanation"]), alternatives=S.to_json(it["alternatives"]),
-                          change=ch.get("change"), source_item_id=ch.get("source_item_id"), status="PROPOSED",
-                          support=S.to_json(it["support"]) if it.get("support") else None))
+        db.add(item_model(p.id, it, (changes or {}).get(it["mission_id"], {})))
     for u in res.unmet:
         ch = (changes or {}).get(u["mission_id"], {})
         db.add(M.PlanUnmet(plan_id=p.id, mission_id=u["mission_id"], reasons=S.to_json(u["reasons"]),
                            fixes=S.to_json(u["fixes"]), dropped_item_id=ch.get("source_item_id")))
     db.flush()
     return p.id
+
+
+def item_model(plan_id: int, it: dict, ch: dict | None = None) -> M.PlanItem:
+    """One package (an item dict from _item_dict) as a plan_item row. Shared by store() and a person's own choice (D61)."""
+    ch = ch or {}
+    return M.PlanItem(plan_id=plan_id, mission_id=it["mission_id"], base_id=it["base_id"],
+                      recovery_base_id=it["recovery_base_id"], aircraft_type_id=it["aircraft_type_id"],
+                      loadout_code=it["loadout_code"], launch_ts=it["launch_ts"], on_station_ts=it["on_station_ts"],
+                      recovery_ts=it["recovery_ts"], n_aircraft=it["n_aircraft"], aircraft_ids=it["aircraft_ids"],
+                      aircrew_ids=it["aircrew_ids"], crew_positions=it["crew_positions"],
+                      route_geom=from_shape(LineString([tuple(x) for x in it["route"]]), srid=4326) if len(it["route"]) > 1 else None,
+                      risk=it["risk"], fuel_l=it["fuel_l"], score=S.to_json(it["score"]),
+                      explanation=S.to_json(it["explanation"]), alternatives=S.to_json(it["alternatives"]),
+                      change=ch.get("change"), source_item_id=ch.get("source_item_id"), status="PROPOSED",
+                      support=S.to_json(it["support"]) if it.get("support") else None)
 
 
 def cand_from_row(st: S.OpsState, r: dict, idx: int) -> F.Candidate:

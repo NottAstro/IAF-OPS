@@ -161,3 +161,6 @@ ALTER TABLE mission ADD CONSTRAINT mission_status_check CHECK (status IN
 ALTER TABLE airspace_zone DROP CONSTRAINT IF EXISTS airspace_zone_kind_check;                   -- D44 public airspace import
 ALTER TABLE airspace_zone ADD CONSTRAINT airspace_zone_kind_check CHECK (kind IN
   ('TRAINING_AREA', 'RESTRICTED', 'DANGER', 'CORRIDOR', 'TEMP_RESERVATION', 'CIVIL_TERMINAL'));
+
+-- D55 scenarios: one live run per scenario, several scenarios at once
+CREATE UNIQUE INDEX IF NOT EXISTS exercise_run_one_live ON exercise_run (scenario_id) WHERE status = 'RUNNING';

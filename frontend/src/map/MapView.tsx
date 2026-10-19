@@ -85,7 +85,9 @@ function hoverText(f: MapGeoJSONFeature): [string, string] {
   const id = f.layer.id;
   if (id === "connectivity-bases") return [String(p.code), `${p.name}${p.distance_km != null ? ` · ${p.distance_km} km direct` : " · source base"}`];
   if (id === "ops-sim" || id === "ops-unk") return [`${p.label} (simulated)`, String(p.desc ?? "")];
-  if (id === "ops-missions") return [String(p.code), `${p.priority} · ${p.name} · ${p.state}`];
+  if (id === "ops-missions") return [String(p.code), `${p.priority} · ${p.name} · ${p.state}${p.tag && p.tag !== "Routine" ? ` · ${p.tag}` : ""}`];
+  if (id === "ops-scenarios") return [`${p.scenario} (simulated)`, String(p.label ?? "")];
+  if (id === "ops-transfers" || id === "ops-transfers-planned") return [String(p.label), p.state === "in_transit" ? "on the road (simulated)" : "recommended, not yet approved"];
   if (id === "ops-routes") return [`${p.code} (${p.priority})`, `${p.n_aircraft} × ${p.type} from ${p.base}${p.proposed ? " · proposed" : ""}`];
   if (id === "ops-ad-sites") return [`${p.code} (simulated)`, String(p.system ?? "")];
   if (id === "live-air") return [String(p.label || p.hex), String(p.desc ?? "")];
@@ -217,9 +219,14 @@ export function MapView({ hidden }: { hidden: boolean }) {
   const airZones = useQuery({ queryKey: ["ops-zones", "airspace"], queryFn: () => api<Fc>("/ops/zones?kind=airspace"), enabled: ops && s.layers["ops-airspace"], staleTime: 60000 });
   const threatZones = useQuery({ queryKey: ["ops-zones", "threat"], queryFn: () => api<Fc>("/ops/zones?kind=threat"), enabled: ops, refetchInterval: 30000 });
   const missionsGeo = useQuery({ queryKey: ["ops-missions"], queryFn: () => api<Fc>("/ops/missions/geo"), enabled: ops, refetchInterval: 30000 });
-  const plansMeta = useQuery({ queryKey: ["plans", "meta"], queryFn: () => api<{ committed_id: number | null; pending_retask_id: number | null }>("/ops/plans?limit=1"),
-    enabled: ops, refetchInterval: 20000 });
-  const cid = plansMeta.data?.committed_id, pidr = plansMeta.data?.pending_retask_id;
+  const plansMeta = useQuery({ queryKey: ["plans", "meta"], queryFn: () => api<{ committed_id: number | null; pending_retask_id: number | null;
+    items: { id: number; kind: string; status: string }[] }>("/ops/plans?limit=1"), enabled: ops, refetchInterval: 20000 });
+  const cid = plansMeta.data?.committed_id;
+  // D56: a full plan proposed for the situation (nothing committed yet) is drawn as proposed, like a re-task
+  const fresh = !cid && plansMeta.data?.items[0]?.kind === "PLAN" && plansMeta.data.items[0].status === "PROPOSED" ? plansMeta.data.items[0].id : null;
+  const pidr = plansMeta.data?.pending_retask_id ?? fresh;
+  const effects = useQuery({ queryKey: ["ops-scenarios"], queryFn: () => api<Fc>("/ops/scenarios/effects/geo"), enabled: ops, refetchInterval: 15000 });
+  const transfersGeo = useQuery({ queryKey: ["ops-transfers"], queryFn: () => api<Fc>("/ops/transfers/geo"), enabled: ops, refetchInterval: 20000 });
   const routes = useQuery({ queryKey: ["ops-routes", cid], queryFn: () => api<Fc>(`/ops/plans/${cid}/routes`), enabled: ops && !!cid });
   const proposed = useQuery({ queryKey: ["ops-routes", "proposal", pidr], queryFn: () => api<Fc>(`/ops/plans/${pidr}/routes`), enabled: ops && !!pidr });
   const radars = useQuery({ queryKey: ["sites", "radars"], queryFn: () => api<Site[]>("/sites/radars"), enabled: ops && s.layers["ops-radar"], staleTime: 60000 });
@@ -244,20 +251,26 @@ export function MapView({ hidden }: { hidden: boolean }) {
   }, [map, ads.data]);
   useEffect(() => {
     if (!map) return;
-    const changed = new Set((proposed.data?.features ?? []).filter((f) => f.properties?.change && f.properties.change !== "KEPT")
+    const changed = new Set((proposed.data?.features ?? []).filter((f) => fresh || (f.properties?.change && f.properties.change !== "KEPT"))
       .map((f) => f.properties?.code));
     setData(map, "ops-routes", [
       ...(routes.data?.features ?? []).filter((f) => !changed.has(f.properties?.code)).map((f) => ({ ...f, properties: { ...f.properties, proposed: false } })),
       ...(proposed.data?.features ?? []).filter((f) => changed.has(f.properties?.code)).map((f) => ({ ...f, properties: { ...f.properties, proposed: true } })),
     ]);
-  }, [map, routes.data, proposed.data]);
+  }, [map, routes.data, proposed.data, fresh]);
+  useEffect(() => {
+    if (map) setData(map, "ops-scenarios", effects.data?.features ?? []);
+  }, [map, effects.data]);
+  useEffect(() => {
+    if (map) setData(map, "ops-transfers", transfersGeo.data?.features ?? []);
+  }, [map, transfersGeo.data]);
   useEffect(() => {
     if (!map) return;
     const tasked = cssVar("--ok"), open = cssVar("--caution"), req = cssVar("--neutral");
     setData(map, "ops-missions", (missionsGeo.data?.features ?? []).map((f) => {
       const p = f.properties as Record<string, string>;
       const isTasked = ["TASKED", "ACTIVE", "PLANNED"].includes(p.status);
-      return { ...f, properties: { ...p, label: `${p.code.replace(/^SIM-/, "")} ${p.priority}`, color: isTasked ? tasked : p.status === "REQUESTED" ? req : open,
+      return { ...f, properties: { ...p, scn: !!p.exercise_run_id, label: `${p.code.replace(/^SIM-/, "")} ${p.priority}`, color: isTasked ? tasked : p.status === "REQUESTED" ? req : open,
         state: isTasked ? `tasked${p.tasked_base ? ` from ${p.tasked_base}` : ""}` : p.status === "REQUESTED" ? "awaiting approval" : "not tasked" } };
     }));
   }, [map, missionsGeo.data]);
@@ -431,7 +444,8 @@ export function MapView({ hidden }: { hidden: boolean }) {
     const flat = s.mode === "WX" || !!focus;
     map.setTerrain(flat ? null : { source: "dem3d", exaggeration: s.exaggeration });
     map.setPaintProperty("hillshade", "hillshade-exaggeration", flat ? 0.55 : 0.8);
-    if (flat) {
+    if (flat || !s.tilt) {
+      // Weather, connectivity focus or the "Straight" map angle: north-up and locked flat (no right-drag tilt)
       map.dragRotate.disable();
       map.touchPitch.disable();
       if (map.getPitch() || map.getBearing()) map.easeTo({ pitch: 0, bearing: 0, duration: 700 });

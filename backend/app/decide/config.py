@@ -132,3 +132,12 @@ MISSION_LABEL = {
     "PARA_DROP": ("PDR", "Para drop"),
 }
 MOUNTAIN_ELEVATION_M = 2500     # targets above this need MOUNTAIN_FLYING crew
+
+# ---------------------------------------------------------------- inventory transfers (D56): SIMULATED logistics policy
+ROAD_FACTOR = 1.3            # road km ≈ great-circle km × this
+CONVOY_KMH = 40              # fuel bowsers and stores lorries, average over the route
+LOAD_H = 1.0                 # loading and paperwork before the convoy leaves
+TRANSFER_MAX_KM = 900        # beyond this by road, no recommendation (airlift is a mission, not a transfer)
+DONOR_KEEP_FRAC = 0.10       # a donor keeps this share of its tank capacity above reserve, besides its own planned use
+SPARE_CATEGORIES = ("ENGINE_SPARES", "AIRFRAME_SPARES", "AVIONICS_SPARES", "TYRES_BRAKES", "CONSUMABLES", "POL_PACKED",
+                    "GSE_SPARES", "MEDICAL")

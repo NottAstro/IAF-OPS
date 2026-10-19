@@ -14,7 +14,7 @@ from sqlalchemy import select, text
 from .. import models as M
 from ..db import SessionLocal
 from ..sim import alerts as alert_rules
-from . import retask, store
+from . import exercise, retask, store
 
 log = logging.getLogger("decide.monitor")
 MONITOR_S = 12
@@ -46,7 +46,8 @@ def check_once(user: dict | None = None, force: bool = False) -> dict:
             rows = []
             for key, kind, msg, base_id, et, eid, mid in new:
                 d = M.Disruption(ts=now, kind=kind, base_id=base_id, entity_type=et, entity_id=eid, message=msg,
-                                 payload={"mission_id": mid}, dedup_key=key, status="OPEN")
+                                 payload={"mission_id": mid}, dedup_key=key, status="OPEN",
+                                 exercise_run_id=exercise.owner(db, base_id, et, eid, mid, kind))
                 db.add(d)
                 rows.append(d)
             db.flush()

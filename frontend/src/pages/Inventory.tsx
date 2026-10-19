@@ -13,7 +13,6 @@ import "./Inventory.css";
 const GROUPS: { label: string; entities: [string, string][] }[] = [
   { label: "Fleet", entities: [["aircraft", "Aircraft"], ["squadrons", "Squadrons"], ["aircraft-types", "Specifications"]] },
   { label: "Personnel", entities: [["aircrew", "Aircrew"], ["ground-crew", "Ground crew"]] },
-  { label: "Operations", entities: [["missions", "Missions"], ["sorties", "Sorties"], ["qra-posture", "QRA posture"]] },
   { label: "Logistics & support", entities: [["fuel-storage", "Fuel storage"], ["fuel-transactions", "Fuel activity"],
     ["ground-assets", "Vehicles & GSE"], ["warehouses", "Warehouses"], ["stock-levels", "Stock levels"], ["stock-items", "Stock catalogue"]] },
   { label: "Defence & communications", entities: [["ad-batteries", "AD batteries"], ["radars", "Radars"], ["comms-nodes", "Comms nodes"],

@@ -158,6 +158,10 @@ def explain_item(st: OpsState, c: Candidate, mission_cands: list[Candidate], sol
             binding.append(f"Fills the airspace slot in {next((z.name for z in st.airspace if z.id == c.zone_id), 'the area')}")
         elif key[0] in ("weapons", "fuel") and key[1] == c.base_id and c.mission_id in hits[0][3]:
             binding.append(f"Uses the last {'weapons' if key[0] == 'weapons' else 'fuel above reserve'} at {b.code}")
+    # D62: what the base had free when it was chosen, so the "why" can say it in words
+    from .optimiser import aircraft_capacity, crew_capacity
+    impact["free"] = {"aircraft": aircraft_capacity(st, c.base_id, c.type_id, c.launch),
+                      "pilots": crew_capacity(st, c.base_id, c.type_id, c.req, c.launch), "type": t.name, "base": b.name.replace("Air Force Station ", "")}
     alts = alternatives(st, c, mission_cands, sol)
     return {"rows": rows, "binding": binding[:4], "impact": impact, "notes": notes, "cost": c.cost_parts}, alts
 
@@ -178,7 +182,11 @@ def alternatives(st: OpsState, c: Candidate, mission_cands: list[Candidate], sol
             diffs = sorted(((o.cost_parts.get(p, 0) - c.cost_parts.get(p, 0), p) for p in PART_LABEL), reverse=True)
             why = ", ".join(f"{PART_LABEL[p]} worse" for d, p in diffs[:2] if d > 0.5) or "similar, slightly higher cost"
         out.append({"base": _code(st, o), "type": st.types[o.type_id].name, "launch": o.launch.isoformat(),
-                    "cost_delta": round(o.cost - c.cost, 1), "why_not": why})
+                    "cost_delta": round(o.cost - c.cost, 1), "why_not": why,
+                    # D62: the trade-off in plain numbers, against the chosen package
+                    "n": o.n, "base_name": st.bases[o.base_id].name.replace("Air Force Station ", ""),
+                    "transit_min": round(o.transit_min), "d_transit_min": round(o.transit_min - c.transit_min),
+                    "d_fuel_l": round(o.fuel_l - c.fuel_l), "risk": round(o.risk_peak, 2)})
         if len(out) >= k:
             break
     return out

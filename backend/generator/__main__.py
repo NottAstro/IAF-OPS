@@ -32,7 +32,7 @@ OPERATIONAL_TABLES = [
     "fuel_storage", "runway", "air_defence_battery", "radar_site", "comms_link", "comms_node", "ad_system_type",
     "radar_type", "app_user", "base", "aircraft_type", "command", "alert", "kpi_snapshot", "sim_state", "audit_log",
     "loadout_config", "type_loadout", "airspace_zone", "threat_zone", "wx_base_forecast", "plan", "plan_item",
-    "plan_unmet", "disruption", "scenario", "exercise_run",
+    "plan_unmet", "disruption", "scenario", "exercise_run", "inventory_transfer",
 ]
 
 

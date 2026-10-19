@@ -13,7 +13,7 @@ A prototype for Smart India Hackathon 2026, problem statement **SIH26250** ("Air
 - **Dynamic re-tasking**: the committed plan is re-checked every 12 s; a closed runway, a grounded fleet, a weather front or a pop-up P1 becomes a re-task proposal (usually < 1 s) that changes as little as possible; a person commits it
 - **Air-to-air refuelling** (tanker legs when a package can't reach or hold), **runway launch rates**, **in-flight re-roling** of airborne packages for urgent pop-ups, and **civil-traffic deconfliction** (busy terminal areas and live ADS-B density cost more)
 - **Package dependencies and split missions**: barrier CAPs fly only under their AEW&C orbit; a 6-hour patrol or a flood-relief surge no single package can fly is offered a checked split (reliefs or parts from several bases) that a planner applies with one click
-- **Manual planning baseline** (Planner → Manual baseline): plan by hand against the clock with the real rules as referee; results sit beside the optimiser's in the benchmark (PS-8)
+- **Manual planning baseline** (Planner → Details & tools → Plan by hand): plan by hand against the clock with the real rules as referee; results sit beside the optimiser's in the benchmark (PS-8)
 - **Public airspace** (optional): `python -m app.decide.airspace_import` with `OPENAIP_API_KEY` adds published prohibited / restricted / danger and civil terminal airspace
 - **Predictive maintenance**: a snag-risk model learned from the maintenance log ([model card](docs/MODEL_CARD_SNAG_RISK.md)) gives P1/P2 packages the most reliable tails and feeds the forecasts
 - **What-if and COA comparison**, **72 h forecasts**, and an **exercise mode** for directing staff (scenario injects, after-action report)
@@ -28,6 +28,24 @@ A prototype for Smart India Hackathon 2026, problem statement **SIH26250** ("Air
 
 Docs: [PRD](docs/PRD.md) · [Data model](docs/DATA_MODEL.md) · [Architecture](docs/ARCHITECTURE.md) · [Free APIs](docs/API.md) · [Design system](docs/DESIGN_SYSTEM.md) · [Build plan](docs/IMPLEMENTATION_PLAN.md) · [Agent rules](AGENTS.md)
 
+## How it works (the flow)
+
+1. **Situation:** the Scenarios page; any number of scenarios can be live (none = routine only).
+2. **Missions:** routine tasking plus each scenario's own missions, tagged with its name.
+3. **Plan:** the planner proposes one automatically whenever the situation changes.
+4. **Impacts:** what the scenario broke or displaced, and the fix for each.
+5. **Resources:** requirements by base, and the fuel, weapons and spares transfers that make the plan flyable.
+6. **Decide:** a person commits the plan and approves transfers (both audited).
+7. **Execute:** the simulator flies it; the Ops map shows routes, effects and convoys.
+8. **Assess:** ending a scenario withdraws its missions; then the after-action report.
+
+A change in the situation (a scenario starts or ends, a runway reopens) goes back to step 3.
+
+- **Situation first.** Routine tasking is the baseline. A scenario takes resources away (runway closed, aircraft lost, fuel down) and adds the missions it demands. No plan has to exist beforehand.
+- **Plan.** With nothing committed the planner proposes a full plan; afterwards it re-plans with as little change as possible (P1 first, every rule checked).
+- **Resources.** For the plan under review it shows what each base provides and recommends moving fuel, weapons and spares from bases with spare stock to bases that are short (a min-cost flow over road distance; donors never go below their reserve).
+- **Decide.** Nothing reaches the sortie tables or the stores until a person commits the plan or approves a transfer; both are audited.
+
 ## Run it
 
 **Windows (PowerShell, Docker Desktop running):**
@@ -38,7 +56,7 @@ powershell -ExecutionPolicy Bypass -File scripts\check.ps1   # backend tests + t
 ```
 To skip the boundary pipeline on a second machine: `scripts\dbdump.ps1` on the first, copy `data\dumps\airops.dump`, then `scripts\setup.ps1 -Restore`.
 
-**Phase 2 in five minutes:** sign in as `airhq` → **Planner** → *Generate plan* → open a package ("Why this package") and an uncovered mission ("What would fix it") → *Commit plan* → **Map → Ops** to see the routes. Sign in as `admin` in another browser → **Exercise** → start *Runway closure and pop-up tasking* (×60) → back in the Planner, review and commit each re-task proposal → **Exercise → After-action report**.
+**Phase 2 in five minutes:** sign in as `airhq` → **Scenarios** → pick *Western sector air attack* (or any of the eight; several can run together) → **Start now** → **Open in Planner**. The Planner shows one card per situation; the scenario opens in four steps: **Situation** (what happened and what it means for the plan) → **Plan** (for each impact the planner's recommendation and why: keep it, take one of its other options, apply a fix, or choose a base, aircraft and time yourself, which the planner checks against every rule; approve stock moves) → **Decide** (only what you decided) → **Mission** (**Approve missions**, then watch them fly). **Map → Ops** shows the routes, the scenario's effects on bases and the convoys on the road. **End scenario** withdraws its missions → **Scenarios → After-action report**. Every package and why, what-if and course-of-action comparison, planning by hand and the history of plans are under **Planner → Details & tools**.
 
 **Everything in containers (any OS with Docker):**
 ```bash

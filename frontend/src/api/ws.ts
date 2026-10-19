@@ -12,10 +12,11 @@ const TYPE_KEYS: Record<string, string[][]> = {
   comms_node: [["sites"], ["summary"]],
   stock_level: [["summary"], ["inv"]],
   ground_crew_strength: [["summary"], ["inv"]],
-  plan: [["plans"], ["plan"], ["ops-summary"], ["ops-routes"], ["tasking"]],
-  disruption: [["disruptions"], ["ops-summary"]],
+  plan: [["plans"], ["plan"], ["ops-summary"], ["ops-routes"], ["tasking"], ["scenarios"], ["scenario-response"]],
+  disruption: [["disruptions"], ["ops-summary"], ["scenarios"], ["scenario-response"]],
   mission: [["missions"], ["ops-summary"], ["ops-missions"], ["plan"]],
-  runway: [["summary"], ["ops-wx"]],
+  runway: [["summary"], ["ops-wx"], ["scenario-response"]],
+  scenario: [["scenarios"], ["scenario-response"]],
 };
 
 /** One WebSocket per session: entity changes invalidate queries, new alerts raise toasts (FR-SIM-10). */
@@ -40,16 +41,16 @@ export function useLiveSocket(enabled: boolean) {
         if (msg.topic === "tracks.sim") return st.set({ simTracks: msg.data });
         if (msg.topic === "sim.clock") return st.set({ simClock: msg.data });
         if (msg.topic === "retask.proposal") {
-          ["plans", "plan", "disruptions", "ops-summary"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-          return st.toast(`Re-task proposal ready: ${msg.data.summary}. Review it in the planner.`, "WARNING");
+          ["plans", "plan", "disruptions", "ops-summary", "scenarios", "scenario-response"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+          return st.toast(`A change to the plan is waiting for your decision (${msg.data.summary}). Open the Planner.`, "WARNING");
         }
         if (msg.topic === "plan.ready" || msg.topic === "disruption") {
           ["plans", "disruptions", "ops-summary"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
           return;
         }
         if (msg.topic === "exercise.inject") {
-          ["exercise", "summary", "ops-wx", "ops-zones", "missions"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-          return st.toast(`Exercise inject: ${msg.data.message}`, "WARNING");
+          ["exercise", "scenarios", "scenario-response", "summary", "ops-wx", "ops-zones", "missions"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+          return st.toast(`Scenario: ${msg.data.message}`, "WARNING");
         }
         if (msg.topic === "entity.changed") {
           const now = Date.now();
