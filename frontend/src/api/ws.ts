@@ -64,7 +64,8 @@ export function useLiveSocket(enabled: boolean) {
           const a = msg.data;
           qc.invalidateQueries({ queryKey: ["alerts"] });
           qc.invalidateQueries({ queryKey: ["base-status"] });
-          if ((a.event === "raised" || a.event === "escalated") && (a.severity === "WARNING" || a.severity === "CRITICAL"))
+          // D85: no map draws unknown tracks any more (D76), so their alerts don't pop up either
+          if ((a.event === "raised" || a.event === "escalated") && (a.severity === "WARNING" || a.severity === "CRITICAL") && a.kind !== "UNKNOWN_TRACK")
             st.toast(a.message, a.severity);
         }
       };
