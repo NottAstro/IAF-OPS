@@ -218,16 +218,14 @@ export function Inventory({ user }: { user: User }) {
   return (
     <div className="page">
       <h1 className="page-title">Inventory <Sim /></h1>
-      {/* row 1: categories; row 2: the category's records, search, filters and actions (D81) */}
-      <nav className="inv-cats" aria-label="Inventory categories">
+      {/* row 1: category tabs; row 2: the category's records, search, filters and actions (D81, D83) */}
+      <nav className="inv-tabs" aria-label="Inventory categories">
         {GROUPS.map((g) => {
           const n = countOf(g);
           return (
-            <button key={g.label} className={`inv-cat${g === group ? " on" : ""}`} aria-current={g === group ? "page" : undefined}
-              onClick={() => { if (g !== group) selectEntity(g.entities[0][0]); }}>
-              <span className="inv-cat-ic">{g.icon}</span>
-              <span className="inv-cat-name">{g.label}</span>
-              <span className="inv-cat-count"><b>{n == null ? "…" : num(n)}</b> {g.word}</span>
+            <button key={g.label} className={`inv-tab${g === group ? " on" : ""}`} aria-current={g === group ? "page" : undefined}
+              title={n == null ? undefined : `${num(n)} ${g.word}`} onClick={() => { if (g !== group) selectEntity(g.entities[0][0]); }}>
+              {g.icon}<span>{g.label}</span><span className="inv-tab-n">{n == null ? "…" : num(n)}</span>
             </button>
           );
         })}
@@ -239,30 +237,42 @@ export function Inventory({ user }: { user: User }) {
             aria-current={id === entity ? "page" : undefined} onClick={() => selectEntity(id)}>{name}</button>)}
         </nav>}
         {meta.data && <>
-          {typeCards && <input className="input inv-search" placeholder="Search aircraft type" value={typeSearch}
-            onChange={(e) => setTypeSearch(e.target.value)} aria-label="Search aircraft type" />}
-          {!typeCards && meta.data.search.length > 0 && <input className="input inv-search" placeholder={`Search ${meta.data.search.map((k) => head(k).toLowerCase()).join(", ")}`}
-            value={search} onChange={(e) => { setSearch(e.target.value); setPage(1); }} aria-label="Search" />}
+          <span className="inv-sep" aria-hidden />
+          {(typeCards || meta.data.search.length > 0) && (
+            <label className="inv-search">{ic(<><circle cx="10.5" cy="10.5" r="6" /><path d="m15 15 5 5" /></>)}
+              {typeCards
+                ? <input placeholder="Search aircraft type" value={typeSearch} onChange={(e) => setTypeSearch(e.target.value)} aria-label="Search aircraft type" />
+                : <input placeholder={`Search ${meta.data.search.map((k) => head(k).toLowerCase()).join(", ")}`} value={search}
+                    onChange={(e) => { setSearch(e.target.value); setPage(1); }} aria-label="Search" />}
+            </label>
+          )}
           {meta.data.scope && (
-            <select className="select" value={baseFilter} onChange={(e) => { setBaseFilter(e.target.value); setPage(1); }} aria-label="Base">
+            <select className={`inv-filter${baseFilter ? " on" : ""}`} value={baseFilter} onChange={(e) => { setBaseFilter(e.target.value); setPage(1); }} aria-label="Base">
               <option value="">All bases</option>
               {(bases.data ?? []).filter((b) => b.side === "OWN").map((b) => <option key={b.id} value={b.id}>{b.code} {b.name.replace("Air Force Station ", "")}</option>)}
             </select>
           )}
           {meta.data.scope && (
-            <select className="select" value={command} onChange={(e) => { setCommand(e.target.value); setPage(1); }} aria-label="Command">
+            <select className={`inv-filter${command ? " on" : ""}`} value={command} onChange={(e) => { setCommand(e.target.value); setPage(1); }} aria-label="Command">
               <option value="">All commands</option>{["WAC", "SWAC", "CAC", "EAC", "SAC", "TC", "MC"].map((c) => <option key={c}>{c}</option>)}
             </select>
           )}
           {statusCol && !typeCards && (
-            <select className="select" value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} aria-label="Status">
+            <select className={`inv-filter${statusFilter ? " on" : ""}`} value={statusFilter} onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }} aria-label="Status">
               <option value="">Any {label(statusCol.name).toLowerCase()}</option>{statusCol.values?.map((v) => <option key={v} value={v}>{label(v)}</option>)}
             </select>
           )}
-          <span style={{ flex: 1 }} />
+          {(search || typeSearch || statusFilter || command || (baseFilter && user.role !== "BASE_COMMANDER")) && (
+            <button className="inv-clear" onClick={() => { setSearch(""); setTypeSearch(""); setStatusFilter(""); setCommand("");
+              if (user.role !== "BASE_COMMANDER") setBaseFilter(""); setPage(1); }}>× Clear</button>
+          )}
+          <div className="inv-actions">
           {meta.data.readonly && <span className="inv-ro" title={`${meta.data.label} are maintained by the system`}>read only</span>}
-          <button className="btn" onClick={exportCsv} disabled={user.role === "VIEWER"} title={user.role === "VIEWER" ? "Viewers can't export" : "Export the filtered view (max 500 rows)"}>Export CSV</button>
-          {canWrite(user, meta.data, undefined) && <button className="btn btn-primary" onClick={() => setEditing("new")}>New {meta.data.label.toLowerCase().replace(/s$/, "")}</button>}
+          <button className="inv-act" onClick={exportCsv} disabled={user.role === "VIEWER"} title={user.role === "VIEWER" ? "Viewers can't export" : "Export the filtered view (max 500 rows)"}>
+            {ic(<path d="M12 4v11m0 0-4.5-4.5M12 15l4.5-4.5M5 19.5h14" />)}Export CSV</button>
+          {canWrite(user, meta.data, undefined) && <button className="inv-act primary" onClick={() => setEditing("new")}>
+            {ic(<path d="M12 5v14M5 12h14" />)}New {meta.data.label.toLowerCase().replace(/s$/, "")}</button>}
+          </div>
         </>}
       </div>
       {meta.data && (
