@@ -27,14 +27,16 @@ export const Sim = ({ title = "Simulated data" }: { title?: string }) => (
   <span className="sim-badge" title={title}>SIM</span>
 );
 
-export function Kpi({ label, value, sub, toneName, large, onClick }: {
+export function Kpi({ label, value, sub, toneName, large, onClick, bar }: {
   label: string; value: ReactNode; sub?: ReactNode; toneName?: string; large?: boolean; onClick?: () => void;
+  /** 0–100: a thin fill bar under the value, in the tile's tone */ bar?: number | null;
 }) {
   return (
     <div className={`kpi${large ? " kpi-lg" : ""}`} onClick={onClick} style={onClick ? { cursor: "pointer" } : undefined}>
       {toneName && toneName !== "ok" && toneName !== "neutral" && <span className="kpi-edge" style={{ background: `var(--${toneName})` }} />}
       <div className="kpi-label">{label}</div>
       <div className="kpi-value">{value}</div>
+      {bar != null && <div className="kpi-bar" aria-hidden><i style={{ width: `${Math.max(0, Math.min(100, bar))}%`, background: `var(--${toneName ?? "accent"})` }} /></div>}
       {sub !== undefined && <div className="kpi-sub">{sub}</div>}
     </div>
   );

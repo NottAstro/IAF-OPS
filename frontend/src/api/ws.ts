@@ -15,7 +15,7 @@ const TYPE_KEYS: Record<string, string[][]> = {
   plan: [["plans"], ["plan"], ["ops-summary"], ["ops-routes"], ["tasking"], ["scenarios"], ["scenario-response"]],
   disruption: [["disruptions"], ["ops-summary"], ["scenarios"], ["scenario-response"]],
   mission: [["missions"], ["ops-summary"], ["ops-missions"], ["plan"]],
-  runway: [["summary"], ["ops-wx"], ["scenario-response"]],
+  runway: [["summary"], ["scenario-response"]],
   scenario: [["scenarios"], ["scenario-response"]],
 };
 
@@ -38,18 +38,18 @@ export function useLiveSocket(enabled: boolean) {
         if (lastSeq && msg.seq > lastSeq + 1) qc.invalidateQueries(); // gap: resync over REST
         lastSeq = msg.seq;
         const st = useStore.getState();
-        if (msg.topic === "tracks.sim") return st.set({ simTracks: msg.data });
+        if (msg.topic === "tracks.sim") return;   // D76: the Ops map no longer draws simulator tracks
         if (msg.topic === "sim.clock") return st.set({ simClock: msg.data });
-        if (msg.topic === "retask.proposal") {
+        if (msg.topic === "retask.proposal") {   // D66: the Planner is scripted, so the real planner's proposals stay quiet
           ["plans", "plan", "disruptions", "ops-summary", "scenarios", "scenario-response"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
-          return st.toast(`A change to the plan is waiting for your decision (${msg.data.summary}). Open the Planner.`, "WARNING");
+          return;
         }
         if (msg.topic === "plan.ready" || msg.topic === "disruption") {
           ["plans", "disruptions", "ops-summary"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
           return;
         }
         if (msg.topic === "exercise.inject") {
-          ["exercise", "scenarios", "scenario-response", "summary", "ops-wx", "ops-zones", "missions"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
+          ["exercise", "scenarios", "scenario-response", "summary", "ops-zones", "missions"].forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
           return st.toast(`Scenario: ${msg.data.message}`, "WARNING");
         }
         if (msg.topic === "entity.changed") {

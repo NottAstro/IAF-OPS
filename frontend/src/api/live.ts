@@ -24,3 +24,15 @@ const coordinates = (a?: RouteAirport): [number, number] | null =>
 export function scheduledDestination(route: LiveEnrichment["route"]): [number, number] | null {
   return coordinates(route?.origin) ? coordinates(route?.destination) : null;
 }
+
+/** "Kempegowda International Airport" → "Kempegowda": short enough for a map label. */
+export const shortAirport = (name?: string) => (name ?? "").replace(/\s+(International\s+)?Airport$/i, "").replace(/\s+International$/i, "");
+
+export interface RouteEnd { at: [number, number]; code: string; name: string }
+/** Both scheduled airports, so the map can mark where the dotted legs end (D77); null unless both have a location. */
+export function scheduledAirports(route: LiveEnrichment["route"]): { origin: RouteEnd; destination: RouteEnd } | null {
+  const o = coordinates(route?.origin), d = coordinates(route?.destination);
+  if (!o || !d) return null;
+  const end = (a: RouteAirport | undefined, at: [number, number]): RouteEnd => ({ at, code: a?.iata_code ?? "", name: shortAirport(a?.name) });
+  return { origin: end(route?.origin, o), destination: end(route?.destination, d) };
+}

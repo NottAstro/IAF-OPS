@@ -100,20 +100,6 @@ export interface FeedState {
   count: number;
 }
 
-export interface AlertItem {
-  id: number;
-  kind: string;
-  severity: Severity;
-  status: string;
-  message: string;
-  raised_at: string;
-  base_id: number | null;
-  base_code?: string;
-  command_code?: string;
-  can_ack?: boolean;
-  ack_by_name?: string | null;
-}
-
 export interface Page<T> {
   items: T[];
   total: number;
@@ -285,7 +271,7 @@ export interface ScenarioCard { id: number; code: string; name: string; category
 export interface ScenarioCatalogue { scenarios: ScenarioCard[]; ended: { id: number; name: string; started_sim: string; ended_sim: string }[];
   committed_plan_id: number | null; sim: { enabled: boolean; sim_now: string; speed: number; paused: boolean } | null;
   bases: { code: string; name: string }[]; types: string[] }
-export interface LiveScenario { id: number; name: string; code: string | null; intensity: Intensity | null; elapsed_min: number; need: number }
+export interface LiveScenario { id: number; name: string; code: string | null; intensity: Intensity | null; started_sim: string; elapsed_min: number; need: number }
 export interface When { kind: "window" | "airborne" | "on_station" | "done" | "at"; a: string; b?: string }
 export type ImpactStatus = "in" | "proposed" | "apply" | "uncovered" | "waiting" | "info";
 export interface Impact { sev: "c" | "w" | "y" | "n"; what: string; sub: string; rec: string; alts: string[]; when: When | null;

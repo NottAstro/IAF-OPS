@@ -5,7 +5,7 @@
 import type { ExpressionSpecification, GeoJSONSourceSpecification, LayerSpecification, StyleSpecification } from "maplibre-gl";
 import type { LayerId } from "../store";
 import { cssVar } from "./colors";
-import { adIcon, airportBlock, placeIcon, stationIcon, towerIcon } from "./symbols";
+import { SITE_ICON_OFFSET, airportBlock, hatchPattern, placeIcon, siteIcon, stationIcon, towerIcon } from "./symbols";
 
 /** Camera limits: India fills the frame; panning stops short of Central Asia (no Tajikistan / Russia). */
 export const REGION_BOUNDS: [[number, number], [number, number]] = [[50, 1], [115, 39.5]];
@@ -39,32 +39,34 @@ export const LAYER_IDS: Record<LayerId, string[]> = {
   states: ["adm1", "lbl-state"],
   districts: ["adm2", "lbl-district"],
   places: ["lbl-place"],
-  "ops-sim": ["ops-sim", "ops-sim-label"],
-  "ops-unknown": ["ops-unk", "ops-unk-label"],
-  "ops-routes": ["ops-routes", "ops-routes-proposed", "ops-routes-support"],
-  "ops-missions": ["ops-missions", "ops-missions-label"],
-  "ops-threat": ["ops-threat-fill", "ops-threat-line"],
-  "ops-airspace": ["ops-air-line", "ops-air-label"],
-  "ops-radar": ["ops-radar"],
-  "ops-ad": ["ops-ad-fill", "ops-ad"],
-  "ops-ad-sites": ["ops-ad-sites"],
-  "ops-wx": ["ops-wx", "ops-wx-label"],
-  "ops-scenarios": ["ops-scenarios", "ops-scenarios-label"],
-  "ops-transfers": ["ops-transfers", "ops-transfers-planned", "ops-transfers-label"],
+  "ops-missions": ["ops-missions", "ops-missions-icon", "ops-missions-label"],
+  "ops-threat": ["ops-threat-fill", "ops-threat-hatch", "ops-threat-glow", "ops-threat-line", "ops-threat-line-low", "ops-threat-label"],
+  "ops-radar-sites": ["ops-radar-sites", "ops-radar-sites-near"],
+  "ops-ad-sites": ["ops-ad-sites", "ops-ad-sites-near"],
+  "ops-comms": ["ops-comms", "ops-comms-near"],
+  "ops-coverage": ["ops-cov-fill", "ops-cov-radar", "ops-cov-ad"],
 };
 
 /** Clickable layers, top-most first. */
-export const INTERACTIVE = ["connectivity-bases", "ops-unk", "ops-sim", "ops-missions", "ops-scenarios", "ops-transfers", "ops-transfers-planned", "ops-routes", "ops-ad-sites", "live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
+export const INTERACTIVE = ["connectivity-bases", "ops-missions", "ops-ad-sites", "ops-radar-sites", "ops-comms", "ops-ad-sites-near", "ops-radar-sites-near", "ops-comms-near", "live-air", "bases-iaf", "bases-mil", "bases-foreign", "bases-alg", "metar", "airports", "stations", "towers"];
 export const CONNECTIVITY_LAYERS = ["connectivity-direct", "connectivity-direct-label", "connectivity-road-glow", "connectivity-road", "connectivity-access", "connectivity-halo", "connectivity-bases"];
 /** Weather rasters go under the boundaries, so borders and names stay readable through the clouds. */
 export const OVERLAY_BEFORE = "adm2";
 /** Base-connection spotlight layers (Infrastructure view). */
 export const FOCUS_LAYERS = ["focus-mask", "focus-ring", "focus-link", "focus-link-label", "focus-end"];
+/** The hovered or selected site's own coverage ring (Ops view, D63): data-driven, not a toggle. */
+export const RING_LAYERS = ["ops-ring-fill", "ops-ring-glow", "ops-ring-radar", "ops-ring-ad", "ops-ring-label"];
+/** A focused planner package (D71): dotted route with a glow, a destination ring, base and target names, its aircraft. Data-driven, Ops only. */
+export const FOCUS_PKG_LAYERS = ["ops-focus-glow", "ops-focus-line", "ops-focus-end", "ops-focus-target", "ops-focus-label", "ops-focus-ac"];
+/** Ops layers faded while a package is focused, and the opacity property each fades by. */
+export const FOCUS_DIM: [string, string, number][] = [["ops-missions", "circle-opacity", 0.14], ["ops-missions", "circle-stroke-opacity", 0.6],
+  ["ops-missions-icon", "icon-opacity", 1], ["ops-missions-label", "text-opacity", 1]];
 
 export function buildStyle(): StyleSpecification {
   const origin = location.origin;
   const bg = cssVar("--bg");
   const halo = cssVar("--bg", 0.85);
+  const hostile = cssVar("--base-hostile");
   const emptyFc = (): GeoJSONSourceSpecification => ({ type: "geojson", data: { type: "FeatureCollection", features: [] } });
   const linkColor = x(["match", ["get", "kind"], "rail", cssVar("--map-rail-main"), "air", cssVar("--map-label"), cssVar("--accent")]);
   const station = cssVar("--map-station");
@@ -80,6 +82,25 @@ export function buildStyle(): StyleSpecification {
     },
     paint: { "text-color": layer === "iaf" ? cssVar("--accent-strong") : cssVar("--map-label"), "text-halo-color": halo, "text-halo-width": 1.5 },
   });
+  const covColor = x(["match", ["get", "kind"], "ad", cssVar("--accent"), cssVar("--info")]);
+  const covLine = (id: string, source: string, kind: "radar" | "ad", width: number, opacity: number): LayerSpecification => ({
+    id, type: "line", source, filter: ["all", ["==", ["get", "kind"], kind], ["!=", ["geometry-type"], "Point"]], layout: { visibility: "none" },
+    paint: { "line-color": covColor, "line-width": width, "line-opacity": opacity, "line-dasharray": kind === "radar" ? [1, 2] : [4, 2] },
+  });
+  // Far out, sites collide (with each other and with base tags) so the map stays readable; from zoom 9 the "-near"
+  // layer draws every site, since comms nodes and point defence sit 1–8 km from their base.
+  const siteLayer = (id: string, kind: "ad" | "radar" | "comms", minzoom: number): LayerSpecification[] => [false, true].map((near) => ({
+    id: near ? `${id}-near` : id, type: "symbol", source: "ops-sites", minzoom: near ? 9 : minzoom, ...(near ? {} : { maxzoom: 9 }),
+    filter: ["==", ["get", "kind"], kind],
+    layout: {
+      visibility: "none", "icon-image": siteIcon(kind), "icon-offset": [0, SITE_ICON_OFFSET], "icon-size": zoomLin(3.5, 0.8, 9, 1.05),
+      "icon-allow-overlap": near, "icon-padding": 1, "symbol-sort-key": ["get", "rank"],
+      "text-field": ["step", ["zoom"], "", 7, ["get", "code"]], "text-font": BOLD, "text-size": 9,
+      "text-offset": [0, 2.4], "text-anchor": "top", "text-optional": true,
+    },
+    paint: { "icon-opacity": x(["case", ["in", ["get", "status"], ["literal", ["OFFLINE", "MAINTENANCE", "DOWN"]]], 0.45, 1]),
+      "text-color": cssVar("--sim"), "text-halo-color": halo, "text-halo-width": 1.5 },
+  }) as LayerSpecification);
   const infraLine = (id: string, filter: unknown, minzoom: number, layout: object, paint: object): LayerSpecification =>
     ({ id, type: "line", source: "omt", "source-layer": "transportation", minzoom, filter: x(filter),
        layout: { visibility: "none", "line-cap": "round", "line-join": "round", ...layout }, paint } as LayerSpecification);
@@ -230,66 +251,52 @@ export function buildStyle(): StyleSpecification {
       },
       paint: { "text-color": ["get", "color"], "text-halo-color": halo, "text-halo-width": 1.2 } },
     // operations view (Phase 2, simulated): zones and coverage under the bases, tracks above them
+    // D78: threat bands: a tint by risk, hatched when risk ≥ 0.5, a soft inner glow, a crisp edge (solid when high risk,
+    // dashed when lower) and the band's name along that edge
     { id: "ops-threat-fill", type: "fill", source: "ops-zones", filter: ["==", ["get", "layer"], "threat"], layout: { visibility: "none" },
-      paint: { "fill-color": cssVar("--base-hostile"), "fill-opacity": x(["*", 0.14, ["get", "risk"]]) } },
-    { id: "ops-threat-line", type: "line", source: "ops-zones", filter: ["==", ["get", "layer"], "threat"], layout: { visibility: "none" },
-      paint: { "line-color": cssVar("--base-hostile"), "line-width": 1.2, "line-opacity": 0.75, "line-dasharray": [3, 2] } },
-    { id: "ops-air-line", type: "line", source: "ops-zones", filter: ["==", ["get", "layer"], "airspace"], layout: { visibility: "none" },
-      paint: { "line-color": x(["match", ["get", "kind"], "DANGER", cssVar("--caution"), "RESTRICTED", cssVar("--warning"), cssVar("--line")]),
-        "line-width": 1, "line-dasharray": [2, 2], "line-opacity": 0.85 } },
-    { id: "ops-air-label", type: "symbol", source: "ops-zones", minzoom: 6.5, filter: ["==", ["get", "layer"], "airspace"],
-      layout: { visibility: "none", "text-field": ["get", "name"], "text-font": REG, "text-size": 9.5, "symbol-placement": "point" },
-      paint: { "text-color": cssVar("--text-2"), "text-halo-color": halo, "text-halo-width": 1 } },
-    { id: "ops-radar", type: "line", source: "ops-rings", filter: ["==", ["get", "layer"], "radar"], layout: { visibility: "none" },
-      paint: { "line-color": cssVar("--info"), "line-width": 0.9, "line-opacity": x(["case", ["get", "ok"], 0.55, 0.25]), "line-dasharray": [1, 2] } },
-    { id: "ops-ad-fill", type: "fill", source: "ops-rings", filter: ["==", ["get", "layer"], "ad"], layout: { visibility: "none" },
-      paint: { "fill-color": cssVar("--accent"), "fill-opacity": x(["case", ["get", "ok"], 0.06, 0.02]) } },
-    { id: "ops-ad", type: "line", source: "ops-rings", filter: ["==", ["get", "layer"], "ad"], layout: { visibility: "none" },
-      paint: { "line-color": cssVar("--accent"), "line-width": 0.9, "line-opacity": x(["case", ["get", "ok"], 0.6, 0.25]), "line-dasharray": [4, 2] } },
-    { id: "ops-routes-support", type: "line", source: "ops-routes", filter: ["get", "support"], layout: { visibility: "none", "line-cap": "round" },
-      paint: { "line-color": cssVar("--sim"), "line-width": zoomLin(4, 1, 8, 1.8), "line-dasharray": [0.6, 1.8], "line-opacity": 0.75 } },
-    { id: "ops-routes", type: "line", source: "ops-routes", filter: ["all", ["!", ["get", "proposed"]], ["!", ["get", "support"]]],
-      layout: { visibility: "none", "line-cap": "round" },
-      paint: { "line-color": cssVar("--sim"), "line-width": zoomLin(4, 1.2, 8, 2.2), "line-opacity": 0.8 } },
-    { id: "ops-routes-proposed", type: "line", source: "ops-routes", filter: ["all", ["get", "proposed"], ["!", ["get", "support"]]], layout: { visibility: "none" },
-      paint: { "line-color": cssVar("--sim"), "line-width": zoomLin(4, 1.4, 8, 2.4), "line-dasharray": [2, 1.5], "line-opacity": 0.95 } },
-    { id: "ops-wx", type: "circle", source: "ops-wx", layout: { visibility: "none" },
-      paint: { "circle-radius": zoomLin(4, 11, 8, 18), "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": ["get", "color"],
-        "circle-stroke-width": 2, "circle-stroke-opacity": 0.9 } },
-    { id: "ops-wx-label", type: "symbol", source: "ops-wx", minzoom: 5, layout: {
-        visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 9.5, "text-offset": [0, -2.1], "text-optional": true },
-      paint: { "text-color": ["get", "color"], "text-halo-color": halo, "text-halo-width": 1.2 } },
-    // D56: what live scenarios did to bases, and fuel / weapons / spares moving between bases (both simulated)
-    { id: "ops-scenarios", type: "circle", source: "ops-scenarios", layout: { visibility: "none" },
-      paint: { "circle-radius": zoomLin(4, 13, 8, 22), "circle-color": "rgba(0,0,0,0)", "circle-stroke-color": cssVar("--warning"),
-        "circle-stroke-width": 2, "circle-stroke-opacity": 0.95 } },
-    { id: "ops-scenarios-label", type: "symbol", source: "ops-scenarios", minzoom: 4.5, layout: {
-        visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 10, "text-offset": [0, 2.2], "text-anchor": "top",
-        "text-optional": true },
-      paint: { "text-color": cssVar("--warning"), "text-halo-color": halo, "text-halo-width": 1.3 } },
-    { id: "ops-transfers", type: "line", source: "ops-transfers", filter: ["==", ["get", "state"], "in_transit"],
-      layout: { visibility: "none", "line-cap": "round" },
-      paint: { "line-color": cssVar("--ok"), "line-width": zoomLin(4, 1.6, 8, 2.8), "line-opacity": 0.9 } },
-    { id: "ops-transfers-planned", type: "line", source: "ops-transfers", filter: ["==", ["get", "state"], "recommended"],
-      layout: { visibility: "none" },
-      paint: { "line-color": cssVar("--ok"), "line-width": zoomLin(4, 1.2, 8, 2), "line-dasharray": [2, 2], "line-opacity": 0.75 } },
-    { id: "ops-transfers-label", type: "symbol", source: "ops-transfers", minzoom: 5, layout: {
-        visibility: "none", "symbol-placement": "line-center", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 9.5,
-        "text-optional": true },
-      paint: { "text-color": cssVar("--ok"), "text-halo-color": halo, "text-halo-width": 1.3 } },
+      paint: { "fill-color": hostile, "fill-opacity": x(["+", 0.03, ["*", 0.12, ["get", "risk"]]]) } },
+    { id: "ops-threat-hatch", type: "fill", source: "ops-zones", filter: ["all", ["==", ["get", "layer"], "threat"], [">=", ["get", "risk"], 0.5]],
+      layout: { visibility: "none" }, paint: { "fill-pattern": hatchPattern(hostile), "fill-opacity": 0.32 } },
+    { id: "ops-threat-glow", type: "line", source: "ops-zones", filter: ["==", ["get", "layer"], "threat"], layout: { visibility: "none", "line-join": "round" },
+      paint: { "line-color": hostile, "line-width": 7, "line-blur": 6, "line-opacity": x(["*", 0.4, ["get", "risk"]]) } },
+    { id: "ops-threat-line", type: "line", source: "ops-zones", filter: ["all", ["==", ["get", "layer"], "threat"], [">=", ["get", "risk"], 0.5]],
+      layout: { visibility: "none", "line-join": "round" }, paint: { "line-color": hostile, "line-width": 1.6, "line-opacity": 0.85 } },
+    { id: "ops-threat-line-low", type: "line", source: "ops-zones", filter: ["all", ["==", ["get", "layer"], "threat"], ["<", ["get", "risk"], 0.5]],
+      layout: { visibility: "none", "line-join": "round" }, paint: { "line-color": hostile, "line-width": 1.2, "line-opacity": 0.7, "line-dasharray": [3, 2] } },
+    { id: "ops-threat-label", type: "symbol", source: "ops-zones", minzoom: 5, filter: ["==", ["get", "layer"], "threat"],
+      layout: { visibility: "none", "symbol-placement": "line", "symbol-spacing": 520, "text-field": ["get", "name"], "text-font": BOLD,
+        "text-size": 10, "text-letter-spacing": 0.04, "text-keep-upright": true, "text-max-angle": 25, "text-offset": [0, -0.8] },
+      paint: { "text-color": hostile, "text-halo-color": halo, "text-halo-width": 1.5, "text-opacity": 0.9 } },
+    // D63: coverage is one merged outline per kind ("Show all coverage") plus the hovered / selected site's own ring
+    { id: "ops-cov-fill", type: "fill", source: "ops-coverage", layout: { visibility: "none" },
+      paint: { "fill-color": covColor, "fill-opacity": 0.07 } },
+    covLine("ops-cov-radar", "ops-coverage", "radar", 1.6, 0.9),
+    covLine("ops-cov-ad", "ops-coverage", "ad", 1.6, 0.9),
+    { id: "ops-ring-fill", type: "fill", source: "ops-ring", filter: ["==", ["geometry-type"], "Polygon"], layout: { visibility: "none" },
+      paint: { "fill-color": covColor, "fill-opacity": 0.1 } },
+    { id: "ops-ring-glow", type: "line", source: "ops-ring", filter: ["==", ["geometry-type"], "Polygon"], layout: { visibility: "none" },
+      paint: { "line-color": covColor, "line-width": 7, "line-blur": 5, "line-opacity": 0.45 } },
+    covLine("ops-ring-radar", "ops-ring", "radar", 2.2, 1),
+    covLine("ops-ring-ad", "ops-ring", "ad", 2.2, 1),
+    // D78 / D82: a mission area is a soft ring in its state colour (as in the Ops panel) around the mission's own symbol
+    // (rescue, patrol, surveillance …); name and state below
     { id: "ops-missions", type: "circle", source: "ops-missions", layout: { visibility: "none" },
-      paint: { "circle-radius": zoomLin(4, 4, 8, 7), "circle-color": ["get", "color"],
-        "circle-stroke-color": ["case", ["get", "scn"], cssVar("--warning"), bg], "circle-stroke-width": ["case", ["get", "scn"], 2.5, 1.5] } },
+      paint: { "circle-radius": zoomLin(4, 13, 8, 20), "circle-color": ["get", "color"], "circle-opacity": 0.14,
+        "circle-stroke-color": ["get", "color"], "circle-stroke-width": 1.2, "circle-stroke-opacity": 0.6 } },
+    { id: "ops-missions-icon", type: "symbol", source: "ops-missions", layout: { visibility: "none", "icon-image": ["get", "icon"],
+        "icon-size": zoomLin(4, 0.72, 8, 1), "icon-allow-overlap": true, "icon-ignore-placement": true } },
     { id: "ops-missions-label", type: "symbol", source: "ops-missions", minzoom: 5.5, layout: {
-        visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 9.5, "text-offset": [0, 1.1], "text-anchor": "top",
-        "text-optional": true },
-      paint: { "text-color": ["get", "color"], "text-halo-color": halo, "text-halo-width": 1.2 } },
-    { id: "ops-ad-sites", type: "symbol", source: "ops-ad-sites",
-      layout: { visibility: "none", "icon-image": adIcon(), "icon-size": zoomLin(3.5, 0.85, 9, 1.1),
-        "icon-allow-overlap": false, "icon-padding": 2,
-        "text-field": ["step", ["zoom"], "SIM", 7, ["concat", ["get", "code"], " SIM"]], "text-font": BOLD,
-        "text-size": 9, "text-offset": [0, 1.5], "text-anchor": "top", "text-optional": false },
-      paint: { "text-color": cssVar("--sim"), "text-halo-color": halo, "text-halo-width": 1.5 } },
+        visibility: "none", "text-field": ["format", ["get", "label"], {}, "\n", {}, ["get", "sub"], { "font-scale": 0.86, "text-color": ["get", "color"], "text-font": ["literal", REG] }],
+        "text-font": BOLD, "text-size": 10, "text-offset": [0, 2.1], "text-anchor": "top", "text-max-width": 14, "text-optional": true },
+      paint: { "text-color": cssVar("--text-1"), "text-halo-color": halo, "text-halo-width": 1.5 } },
+    // simulated sites: SIM tag drawn into the icon; long-range sites win collisions, short-range ones appear closer in
+    ...siteLayer("ops-comms", "comms", 5.5),
+    ...siteLayer("ops-ad-sites", "ad", 0),
+    ...siteLayer("ops-radar-sites", "radar", 0),
+    { id: "ops-ring-label", type: "symbol", source: "ops-ring", filter: ["==", ["geometry-type"], "Point"], layout: {
+        visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 10.5, "text-anchor": "bottom",
+        "text-offset": [0, -0.3], "text-allow-overlap": true, "text-ignore-placement": true },
+      paint: { "text-color": covColor, "text-halo-color": cssVar("--bg", 0.95), "text-halo-width": 2 } },
     // Observed trail and scheduled airport leg only; never derived from a heading.
     { id: "live-trail", type: "line", source: "live-path", filter: ["==", ["get", "kind"], "trail"],
       layout: { "line-cap": "round", "line-join": "round" },
@@ -297,10 +304,22 @@ export function buildStyle(): StyleSpecification {
     { id: "live-schedule", type: "line", source: "live-path", filter: ["==", ["get", "kind"], "schedule"],
       layout: { "line-cap": "round", "line-join": "round" },
       paint: { "line-color": cssVar("--map-schedule"), "line-width": 1.8, "line-dasharray": [3, 3] } },
-    { id: "live-schedule-label", type: "symbol", source: "live-path", filter: ["==", ["get", "kind"], "schedule"],
+    { id: "live-schedule-label", type: "symbol", source: "live-path", filter: ["all", ["==", ["get", "kind"], "schedule"], ["==", ["get", "leg"], "to"]],
       layout: { "symbol-placement": "line-center", "text-field": "Scheduled route (adsbdb, may differ from actual)",
         "text-font": REG, "text-size": 10, "text-keep-upright": true },
       paint: { "text-color": cssVar("--map-schedule"), "text-halo-color": halo, "text-halo-width": 1.5 } },
+    // D77: where the legs end: the scheduled origin and destination airports, and the first observed point
+    { id: "live-ends", type: "circle", source: "live-path", filter: ["in", ["get", "kind"], ["literal", ["airport", "seen"]]],
+      paint: { "circle-radius": ["match", ["get", "role"], "to", 7, "from", 5.5, 3.5], "circle-color": cssVar("--bg"),
+        "circle-stroke-color": ["match", ["get", "kind"], "seen", cssVar("--map-trail"), cssVar("--map-schedule")],
+        "circle-stroke-width": ["match", ["get", "role"], "to", 2.5, 2] } },
+    { id: "live-ends-core", type: "circle", source: "live-path", filter: ["==", ["get", "role"], "to"],
+      paint: { "circle-radius": 2.6, "circle-color": cssVar("--map-schedule") } },
+    { id: "live-ends-label", type: "symbol", source: "live-path", filter: ["in", ["get", "kind"], ["literal", ["airport", "seen"]]],
+      layout: { "text-field": ["format", ["get", "title"], {}, "\n", {}, ["get", "sub"], { "font-scale": 0.82, "text-font": ["literal", REG] }],
+        "text-font": BOLD, "text-size": ["match", ["get", "kind"], "seen", 9.5, 11.5], "text-anchor": "top", "text-offset": [0, 0.9],
+        "text-max-width": 14, "text-allow-overlap": true, "text-ignore-placement": true },
+      paint: { "text-color": ["match", ["get", "kind"], "seen", cssVar("--text-2"), cssVar("--text-1")], "text-halo-color": cssVar("--bg", 0.95), "text-halo-width": 2 } },
     // Infra focus: only public identities and measured/estimated connections, with no inventory gauges.
     { id: "connectivity-direct", type: "line", source: "connectivity", filter: ["==", ["get", "role"], "direct"], layout: { visibility: "none" },
       paint: { "line-color": cssVar("--accent-strong"), "line-width": ["case", ["get", "active"], 2.5, 1.4], "line-opacity": ["get", "opacity"], "line-dasharray": [2, 2] } },
@@ -337,16 +356,26 @@ export function buildStyle(): StyleSpecification {
     { id: "live-label", type: "symbol", source: "live", minzoom: 7.5,
       layout: { "text-field": ["get", "label"], "text-font": REG, "text-size": 9.5, "text-offset": [0, 1.2], "text-anchor": "top", "text-optional": true },
       paint: { "text-color": cssVar("--text-2"), "text-halo-color": halo, "text-halo-width": 1 } },
-    // simulated tracks (Ops view only; never mixed with the real ADS-B layer, ARCHITECTURE §6.6)
-    ...(["ops-sim", "ops-unk"] as const).flatMap((id): LayerSpecification[] => [
-      { id, type: "symbol", source: "ops-sim", filter: ["==", ["get", "kind"], id === "ops-sim" ? "SIM_IAF" : "SIM_UNKNOWN"],
-        layout: { visibility: "none", "icon-image": ["get", "icon"], "icon-rotate": ["get", "rot"], "icon-rotation-alignment": "map",
-          "icon-size": zoomLin(3, 0.7, 6, 0.9, 9, 1.15), "icon-allow-overlap": true, "icon-ignore-placement": true } },
-      { id: `${id}-label`, type: "symbol", source: "ops-sim", minzoom: 6.5, filter: ["==", ["get", "kind"], id === "ops-sim" ? "SIM_IAF" : "SIM_UNKNOWN"],
-        layout: { visibility: "none", "text-field": ["get", "label"], "text-font": REG, "text-size": 9.5, "text-offset": [0, 1.25], "text-anchor": "top",
-          "text-optional": true },
-        paint: { "text-color": id === "ops-sim" ? cssVar("--sim") : cssVar("--warning"), "text-halo-color": halo, "text-halo-width": 1 } },
-    ]),
+    // D71: the focused planner package, above everything else in Ops
+    { id: "ops-focus-glow", type: "line", source: "ops-focus", filter: ["==", ["get", "role"], "route"], layout: { visibility: "none", "line-cap": "round" },
+      paint: { "line-color": cssVar("--sim"), "line-width": 9, "line-blur": 6, "line-opacity": 0.35 } },
+    { id: "ops-focus-line", type: "line", source: "ops-focus", filter: ["==", ["get", "role"], "route"], layout: { visibility: "none", "line-cap": "round" },
+      paint: { "line-color": cssVar("--sim"), "line-width": 3, "line-dasharray": [0.1, 2] } },
+    { id: "ops-focus-end", type: "circle", source: "ops-focus", filter: ["==", ["get", "role"], "target"], layout: { visibility: "none" },
+      paint: { "circle-radius": 22, "circle-color": cssVar("--sim", 0.12), "circle-stroke-color": cssVar("--sim"), "circle-stroke-width": 2 } },
+    { id: "ops-focus-target", type: "symbol", source: "ops-focus", filter: ["==", ["get", "role"], "target"], layout: { visibility: "none",
+        "icon-image": ["get", "icon"], "icon-size": 1.15, "icon-allow-overlap": true, "icon-ignore-placement": true } },
+    { id: "ops-focus-label", type: "symbol", source: "ops-focus", filter: ["in", ["get", "role"], ["literal", ["base", "target"]]],
+      layout: { visibility: "none", "text-field": ["get", "label"], "text-font": BOLD, "text-size": 12, "text-anchor": "bottom",
+        "text-offset": ["case", ["==", ["get", "role"], "target"], ["literal", [0, -2.2]], ["literal", [0, -1.5]]],
+        "text-allow-overlap": true, "text-ignore-placement": true, "text-max-width": 14 },
+      paint: { "text-color": cssVar("--text-1"), "text-halo-color": cssVar("--bg", 0.95), "text-halo-width": 2 } },
+    { id: "ops-focus-ac", type: "symbol", source: "ops-focus", filter: ["==", ["get", "role"], "ac"],
+      layout: { visibility: "none", "icon-image": ["get", "icon"], "icon-rotate": ["get", "rot"], "icon-rotation-alignment": "map",
+        "icon-size": zoomLin(5, 1.1, 9, 1.5), "icon-offset": ["get", "off"], "icon-allow-overlap": true, "icon-ignore-placement": true,
+        "text-field": ["get", "label"], "text-font": BOLD, "text-size": 11, "text-offset": ["get", "toff"], "text-max-width": 16, "text-allow-overlap": true,
+        "text-ignore-placement": true },
+      paint: { "text-color": cssVar("--sim"), "text-halo-color": cssVar("--bg", 0.95), "text-halo-width": 2 } },
   ];
 
   const terrarium = ["https://s3.amazonaws.com/elevation-tiles-prod/terrarium/{z}/{x}/{y}.png"];
@@ -377,14 +406,11 @@ export function buildStyle(): StyleSpecification {
       focus: emptyFc(),
       connectivity: { ...emptyFc(), attribution: 'Road routes: Valhalla / FOSSGIS · © OpenStreetMap contributors' },
       "ops-zones": emptyFc(),
-      "ops-rings": emptyFc(),
-      "ops-ad-sites": emptyFc(),
-      "ops-routes": emptyFc(),
+      "ops-coverage": emptyFc(),
+      "ops-ring": emptyFc(),
+      "ops-focus": emptyFc(),
+      "ops-sites": emptyFc(),
       "ops-missions": emptyFc(),
-      "ops-sim": emptyFc(),
-      "ops-wx": emptyFc(),
-      "ops-scenarios": emptyFc(),
-      "ops-transfers": emptyFc(),
     },
     layers,
   };

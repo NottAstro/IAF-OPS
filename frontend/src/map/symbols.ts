@@ -20,17 +20,35 @@ export const baseBlock = (o: BlockOpts) =>
 export const airportBlock = (code = "") => `ap|${code}`;
 /** Railway station: small gold square; major junctions get a dark track bar. */
 export const stationIcon = (color: string, size: number, major: boolean) => `rs|${color}|${size}|${major ? 1 : 0}`;
+/** A mission's own symbol (D82): a dark disc ringed in the mission's state colour, with a glyph for what it does. */
+export const missionIcon = (kind: string, color: string) => `mi|${kind}|${color}`;
+/** Diagonal hatch, used as a fill pattern for high-risk threat bands (D78). */
+export const hatchPattern = (color: string) => `hatch|${color}`;
 /** Settlement dot; capitals get a ring. */
 export const placeIcon = (color: string, size: number, capital: boolean) => `pd|${color}|${size}|${capital ? 1 : 0}`;
 /** Top-down aircraft glyph, drawn pointing north (rotated on the map). */
 export const glyphIcon = (cls: string, color: string, size: number) => `gl|${cls}|${color}|${size}`;
 export const towerIcon = () => "site|tower";
-export const adIcon = () => "site|ad";
+/** Simulated sites (Ops only, D63): violet shapes, shield = air defence, round = radar, diamond = comms node. */
+export const siteIcon = (kind: "ad" | "radar" | "comms") => `site|${kind}`;
+/** Simulated site icons carry their SIM tag under the shape, so the marker and its SIM label collide as one box and
+ * the label is never dropped (DESIGN_SYSTEM §9). Layers shift the image down by this much to centre the shape. */
+export const SITE_ICON_OFFSET = 4.5;
 
-/** Shield/chevron and backed mast glyphs stay distinct from base tags and aircraft. */
+const mast = (g: CanvasRenderingContext2D, s: number) => {
+  g.moveTo(-4 * s, 7 * s); g.lineTo(0, -5 * s); g.lineTo(4 * s, 7 * s);
+  g.moveTo(-2.5 * s, 3 * s); g.lineTo(2.5 * s, 3 * s);
+  g.moveTo(-5 * s, -5 * s); g.quadraticCurveTo(-8 * s, -2 * s, -5 * s, 0);
+  g.moveTo(5 * s, -5 * s); g.quadraticCurveTo(8 * s, -2 * s, 5 * s, 0);
+};
+
+/** Site glyphs stay distinct from base tags and aircraft: the real telecom tower is a square tile, simulated sites are
+ * violet shapes with a SIM tag. */
 function drawSite(kind: string) {
-  const [c, g] = canvas(24);
-  const color = cssVar(kind === "ad" ? "--sim" : "--map-tower");
+  const sim = kind !== "tower";
+  const [c, g] = sim ? canvasRect(24, 33, 0) : canvas(24);
+  if (sim) g.translate(12, 12);
+  const color = cssVar(sim ? "--sim" : "--map-tower");
   g.strokeStyle = color;
   g.fillStyle = cssVar("--bg");
   g.lineWidth = 1.4;
@@ -40,20 +58,92 @@ function drawSite(kind: string) {
   if (kind === "ad") {
     g.moveTo(-8, -9); g.lineTo(8, -9); g.lineTo(8, 1);
     g.quadraticCurveTo(8, 6, 0, 10); g.quadraticCurveTo(-8, 6, -8, 1); g.closePath();
-  } else g.roundRect(-10, -10, 20, 20, 4);
+  } else if (kind === "radar") g.arc(0, 0, 9.5, 0, Math.PI * 2);
+  else if (kind === "comms") { g.moveTo(0, -10.5); g.lineTo(10.5, 0); g.lineTo(0, 10.5); g.lineTo(-10.5, 0); g.closePath(); }
+  else g.roundRect(-10, -10, 20, 20, 4);
   g.fill(); g.stroke();
   g.beginPath();
   if (kind === "ad") {
     g.moveTo(-4.5, 1); g.lineTo(0, -4); g.lineTo(4.5, 1);
     g.moveTo(0, -4); g.lineTo(0, 5);
-  } else {
-    g.moveTo(-4, 7); g.lineTo(0, -5); g.lineTo(4, 7);
-    g.moveTo(-2.5, 3); g.lineTo(2.5, 3);
-    g.moveTo(-5, -5); g.quadraticCurveTo(-8, -2, -5, 0);
-    g.moveTo(5, -5); g.quadraticCurveTo(8, -2, 5, 0);
+  } else if (kind === "radar") {   // scope: sweep line and two range arcs
+    g.moveTo(-1, 1); g.lineTo(5, -5);
+    g.moveTo(-1, -2.5); g.arc(-1, 1, 3.5, -Math.PI / 2, 0);
+    g.moveTo(-1, -5); g.arc(-1, 1, 6, -Math.PI / 2, 0);
+  } else if (kind === "comms") mast(g, 0.7);
+  else {
+    mast(g, 1);
     g.moveTo(-3.5, -3.5); g.quadraticCurveTo(-5, -2, -3.5, -0.5);
     g.moveTo(3.5, -3.5); g.quadraticCurveTo(5, -2, 3.5, -0.5);
   }
+  g.stroke();
+  if (sim) {
+    g.fillStyle = color;
+    g.beginPath(); g.roundRect(-8.5, 13, 17, 8, 2); g.fill();
+    g.fillStyle = cssVar("--bg");
+    g.font = FONT(6.5);
+    g.textAlign = "center";
+    g.textBaseline = "middle";
+    g.fillText("SIM", 0, 17.3);
+  }
+  return c;
+}
+
+/** Mission symbols on a 26 px disc: parachute (rescue), cross (casualty evacuation), racetrack (combat air patrol), eye
+ * (surveillance), radar arcs (early warning), crosshair (strike), T (training), crate (airlift), crate under a canopy
+ * (supply drop), waves (flood relief). */
+function drawMission(kind: string, color: string) {
+  const [c, g] = canvas(28);
+  g.fillStyle = cssVar("--bg");
+  g.strokeStyle = color;
+  g.lineWidth = 1.8;
+  g.beginPath(); g.arc(0, 0, 12, 0, Math.PI * 2); g.fill(); g.stroke();
+  g.fillStyle = color;
+  g.lineWidth = 1.6;
+  g.lineCap = "round";
+  g.lineJoin = "round";
+  const canopy = (y: number, r: number) => { g.beginPath(); g.arc(0, y, r, Math.PI, 0); g.closePath(); g.fill(); };
+  const lines = (pts: [number, number, number, number][]) => { g.beginPath(); for (const [a, b, x, y] of pts) { g.moveTo(a, b); g.lineTo(x, y); } g.stroke(); };
+  if (kind === "rescue") {
+    canopy(-2.5, 6.5);
+    lines([[-6.5, -2.5, 0, 4], [6.5, -2.5, 0, 4], [0, -2.5, 0, 4]]);
+    g.beginPath(); g.arc(0, 6, 2, 0, Math.PI * 2); g.fill();
+  } else if (kind === "casevac") {
+    g.fillRect(-2, -7, 4, 14); g.fillRect(-7, -2, 14, 4);
+  } else if (kind === "cap") {
+    g.beginPath(); g.roundRect(-7.5, -4, 15, 8, 4); g.stroke();
+    g.beginPath(); g.moveTo(3.5, -6.5); g.lineTo(6.5, -4); g.lineTo(3.5, -1.5); g.stroke();
+  } else if (kind === "isr") {
+    g.beginPath(); g.moveTo(-8, 0); g.quadraticCurveTo(0, -8, 8, 0); g.quadraticCurveTo(0, 8, -8, 0); g.stroke();
+    g.beginPath(); g.arc(0, 0, 2.6, 0, Math.PI * 2); g.fill();
+  } else if (kind === "aew") {
+    g.beginPath(); g.arc(-4, 4, 2, 0, Math.PI * 2); g.fill();
+    for (const r of [6, 10]) { g.beginPath(); g.arc(-4, 4, r, -Math.PI / 2, 0); g.stroke(); }
+  } else if (kind === "strike") {
+    g.beginPath(); g.arc(0, 0, 5, 0, Math.PI * 2); g.stroke();
+    lines([[0, -8.5, 0, -3], [0, 3, 0, 8.5], [-8.5, 0, -3, 0], [3, 0, 8.5, 0]]);
+  } else if (kind === "training") {
+    g.fillRect(-6.5, -6.5, 13, 3.2); g.fillRect(-1.6, -6.5, 3.2, 13);
+  } else if (kind === "airlift") {
+    g.beginPath(); g.rect(-6, -5, 12, 10); g.stroke();
+    lines([[-6, -1.5, 6, -1.5], [0, -5, 0, -1.5]]);
+  } else if (kind === "supply") {
+    canopy(-3.5, 5.5);
+    lines([[-5.5, -3.5, -2.5, 2], [5.5, -3.5, 2.5, 2]]);
+    g.fillRect(-3.5, 2, 7, 5.5);
+  } else if (kind === "relief") {
+    for (const y of [-3.5, 0.5, 4.5]) { g.beginPath(); g.moveTo(-7, y); g.quadraticCurveTo(-3.5, y - 3, 0, y); g.quadraticCurveTo(3.5, y + 3, 7, y); g.stroke(); }
+  }
+  return c;
+}
+
+/** A 10 px tile of 45° lines that joins seamlessly when repeated. */
+function drawHatch(color: string) {
+  const [c, g] = canvasRect(10, 10, 0);
+  g.strokeStyle = color;
+  g.lineWidth = 1.2;
+  g.beginPath();
+  for (const o of [-10, 0, 10]) { g.moveTo(o, 10); g.lineTo(o + 10, 0); }
   g.stroke();
   return c;
 }
@@ -86,7 +176,10 @@ const measure = (text: string, font: string) => {
 /** Aircraft silhouette in a 24-unit box centred on 0,0, pointing up. */
 function planePath(g: CanvasRenderingContext2D, cls: string) {
   g.beginPath();
-  if (cls === "helicopter") {
+  if (cls === "vehicle") {   // ground vehicle seen from above, nose up, with the windscreen cut out (D82)
+    g.roundRect(-5.5, -10.5, 11, 21, 3);
+    g.moveTo(-4, -6.5); g.lineTo(-4, -3.2); g.lineTo(4, -3.2); g.lineTo(4, -6.5); g.closePath();
+  } else if (cls === "helicopter") {
     g.arc(0, 0, 4.5, 0, Math.PI * 2);
     g.moveTo(-11, -1); g.lineTo(11, -1); g.lineTo(11, 1); g.lineTo(-11, 1); g.closePath();
     g.moveTo(-1, 3); g.lineTo(1, 3); g.lineTo(1, 11); g.lineTo(-1, 11); g.closePath();
@@ -273,6 +366,8 @@ export function iconImage(id: string): { data: ImageData; pixelRatio: number } |
     : p[0] === "pd" ? drawPlace(p[1], Number(p[2]), p[3] === "1")
     : p[0] === "gl" ? drawGlyph(p[1], p[2], Number(p[3]))
     : p[0] === "site" ? drawSite(p[1])
+    : p[0] === "hatch" ? drawHatch(p[1])
+    : p[0] === "mi" ? drawMission(p[1], p[2])
     : null;
   if (!cv) return null;
   return { data: cv.getContext("2d")!.getImageData(0, 0, cv.width, cv.height), pixelRatio: ratio() };

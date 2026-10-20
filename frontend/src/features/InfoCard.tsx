@@ -1,10 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
-import { scheduledDestination, useLivePath } from "../api/live";
-import type { Base, Fix, LiveTrack, MissionRow, PlanItemView, Reason, Site } from "../api/types";
-import { ErrorText, Loading, Pill, Row, Sim, ToneText } from "../components/ui";
-import { RANK, feet, istTime, label, num } from "../lib/format";
+import { scheduledDestination, shortAirport, useLivePath } from "../api/live";
+import type { Base, LiveScenario, LiveTrack, Site } from "../api/types";
+import { ErrorText, Loading, Row, Sim, ToneText } from "../components/ui";
+import { COMMS_NAME, feet, istTime, label, num } from "../lib/format";
 import { LIVE_GROUP, type Selection, useStore } from "../store";
+import { MISSION_WORD, type Status, baseName, isGround, planFocus, statusWord } from "./scripts";
 
 function Card({ title, children, sim }: { title: React.ReactNode; children: React.ReactNode; sim?: boolean }) {
   const set = useStore((s) => s.set);
@@ -17,10 +19,8 @@ function Card({ title, children, sim }: { title: React.ReactNode; children: Reac
 }
 
 export function InfoCard({ sel, liveTracks }: { sel: NonNullable<Selection>; liveTracks: LiveTrack[] }) {
-  if (sel.kind === "mission") return <MissionCard id={sel.id} />;
-  if (sel.kind === "route") return <RouteCard id={sel.id} />;
-  if (sel.kind === "simtrack") return <SimTrackCard id={sel.id} />;
-  if (sel.kind === "ad") return <AdCard id={sel.id} />;
+  if (sel.kind === "plan-mission") return <PlanMissionCard run={sel.run} mission={sel.mission} />;
+  if (sel.kind === "ad" || sel.kind === "radar" || sel.kind === "comms") return <SiteCard kind={sel.kind} id={sel.id} />;
   if (sel.kind === "public-base") return <PublicBase id={sel.id} />;
   if (sel.kind === "live") return <LiveCard track={liveTracks.find((t) => t.hex === sel.hex)} hex={sel.hex} />;
   if (sel.kind === "wx") return <WxCard lat={sel.lat} lon={sel.lon} />;
@@ -40,87 +40,64 @@ export function InfoCard({ sel, liveTracks }: { sel: NonNullable<Selection>; liv
 }
 
 // ---------------------------------------------------------------- Phase 2: operations view cards (all simulated)
-function AdCard({ id }: { id: number }) {
+const SITE: Record<"ad" | "radar" | "comms", [string, string]> = {
+  ad: ["Air defence site", "/sites/ad"], radar: ["Radar site", "/sites/radars"], comms: ["Comms node", "/sites/comms"],
+};
+
+/** Simulated air defence, radar or comms site (Ops view only). Same query keys as the map, so it reads the cache. */
+function SiteCard({ kind, id }: { kind: "ad" | "radar" | "comms"; id: number }) {
   const s = useStore();
-  const q = useQuery({ queryKey: ["sites", "ad"], queryFn: () => api<Site[]>("/sites/ad"), staleTime: 60000 });
+  const [title, path] = SITE[kind];
+  const q = useQuery({ queryKey: ["sites", kind === "radar" ? "radars" : kind], queryFn: () => api<Site[]>(path), staleTime: 60000 });
   const bases = useQuery({ queryKey: ["bases"], queryFn: () => api<Base[]>("/bases"), staleTime: Infinity });
-  if (s.mode !== "OPS") return null;
-  if (!q.data) return <Card title="Air defence site" sim>{q.error ? <ErrorText error={q.error} /> : <Loading />}</Card>;
+  if (s.mode !== "INFRA") return null;
+  if (!q.data) return <Card title={title} sim>{q.error ? <ErrorText error={q.error} /> : <Loading />}</Card>;
   const d = q.data.find((x) => x.id === id);
-  if (!d) return <Card title="Air defence site" sim><div className="empty">Site no longer available.</div></Card>;
+  if (!d) return <Card title={title} sim><div className="empty">Site no longer available.</div></Card>;
   const base = bases.data?.find((b) => b.code === d.base);
   return <Card title={<span className="mono">{d.code ?? "—"}</span>} sim>
-    <Row label="Code" value={d.code ?? "—"} />
-    <Row label="System" value={d.system ?? "—"} />
-    <Row label="Category" value={d.category ? label(d.category) : "—"} />
+    <div className="muted" style={{ margin: "2px 0 6px" }}>{title}</div>
+    {kind === "ad" && <Row label="System" value={d.system ?? "—"} />}
+    {kind === "radar" && <Row label="Type" value={d.type ?? "—"} />}
+    {kind === "comms" && <Row label="Node type" value={COMMS_NAME[d.node_type ?? ""] ?? label(d.node_type)} />}
+    {kind !== "comms" && <Row label="Category" value={d.category ? label(d.category) : "—"} />}
     <Row label="Status" value={d.status ? label(d.status) : "—"} />
-    <Row label="Launchers ready / total" value={`${d.launchers_ready ?? "—"} / ${d.launchers_total ?? "—"}`} />
-    <Row label="Range" value={d.max_range_km != null ? `${num(d.max_range_km)} km` : "—"} />
-    <Row label="Protected base" value={base ? <button className="btn btn-ghost btn-sm" onClick={() => s.set({ selection: { kind: base.side === "OWN" ? "base" : "public-base", id: base.id }, panelTab: "Ov" })}>{base.code}</button> : d.base ?? "—"} />
+    {kind === "ad" && <Row label="Launchers ready / total" value={`${d.launchers_ready ?? "—"} / ${d.launchers_total ?? "—"}`} />}
+    {kind !== "comms" && <Row label="Range" value={d.max_range_km != null ? `${num(d.max_range_km)} km` : "—"} />}
+    <Row label={kind === "ad" ? "Protected base" : "Base"} value={base ? <button className="btn btn-ghost btn-sm" onClick={() => s.set({ selection: { kind: base.side === "OWN" ? "base" : "public-base", id: base.id }, panelTab: "Bw" })}>{base.code}</button> : d.base ?? "—"} />
     <Row label="Latitude / longitude" value={`${d.lat != null ? d.lat.toFixed(4) : "—"}, ${d.lon != null ? d.lon.toFixed(4) : "—"}`} />
+    {kind !== "comms" && <div className="dim" style={{ fontSize: 12, marginTop: 6 }}>The ring on the map is this site's coverage.</div>}
   </Card>;
 }
 
-function MissionCard({ id }: { id: number }) {
-  const q = useQuery({ queryKey: ["missions", "one", id], queryFn: () => api<MissionRow & { unmet: { reasons: Reason[]; fixes: Fix[] } | null }>(`/ops/missions/${id}`) });
-  if (!q.data) return <Card title="Mission" sim>{q.error ? <ErrorText error={q.error} /> : <Loading />}</Card>;
-  const m = q.data;
-  return (
-    <Card title={<span className="mono">{m.code}</span>} sim>
-      <div className="muted" style={{ margin: "2px 0 6px" }}>{m.name}</div>
-      <Row label="Priority / type" value={`${m.priority} · ${label(m.mission_type)}`} />
-      <Row label="Window" value={`${istTime(m.window_start, true)} – ${istTime(m.window_end)}`} />
-      <Row label="Needs" value={`${m.required_aircraft} aircraft, ${m.on_station_min} min on station`} />
-      <Row label="Status" value={<Pill status={m.status === "TASKED" || m.status === "ACTIVE" ? "OPERATIONAL" : m.status === "REQUESTED" ? "PLANNED" : "CAUTION"} text={label(m.status)} />} />
-      {m.tasked_base && <Row label="Tasked" value={`${m.tasked_n} × ${m.tasked_type} from ${m.tasked_base}`} />}
-      {m.sortie_code && <Row label="Sortie" value={<><span className="mono">{m.sortie_code}</span> <Pill status={m.sortie_status} /></>} />}
-      {m.unmet && <>
-        <div className="section-h" style={{ fontSize: 13 }}>Why not tasked</div>
-        {m.unmet.reasons.slice(0, 2).map((r) => <div key={r.code} className="dim" style={{ fontSize: 12, margin: "2px 0" }}>▲ {r.text}{r.examples[0] ? `: ${r.examples[0]}` : ""}</div>)}
-        {m.unmet.fixes[0] && <div className="s-info" style={{ fontSize: 12, marginTop: 4 }}>○ {m.unmet.fixes[0].text}</div>}
-      </>}
-      <div style={{ marginTop: 8 }}><a href={`/missions?focus=${m.id}`}>Open in missions ›</a></div>
-    </Card>
-  );
-}
+const PLAN_STATUS: Record<Status, [string, string]> = { waiting: ["warn", "waiting for approval"], approved: ["ok", "approved"],
+  airborne: ["info", "airborne"], "on station": ["info", "on station"], returning: ["info", "returning"], landed: ["ok", "landed"],
+  "not flown": ["crit", "not flown"] };
 
-function RouteCard({ id }: { id: number }) {
-  const q = useQuery({ queryKey: ["plan", "item", id], queryFn: () => api<PlanItemView>(`/ops/plan-items/${id}`) });
-  if (!q.data) return <Card title="Package" sim>{q.error ? <ErrorText error={q.error} /> : <Loading />}</Card>;
-  const it = q.data;
+/** A scripted planner mission focused on the Ops map (D71): the package, where it is in its sortie, and why. */
+function PlanMissionCard({ run, mission }: { run: string; mission: string }) {
+  const live = useQuery({ queryKey: ["scenarios", "live"], queryFn: () => api<LiveScenario[]>("/ops/scenarios/live"), refetchInterval: 15000 });
+  const demo = useStore((s) => s.demo);
+  const now = useStore((s) => s.simClock?.sim_now) ?? new Date().toISOString();
+  const mode = useStore((s) => s.mode);
+  if (mode !== "OPS") return null;
+  if (!live.data && run !== "routine") return <Card title="Mission" sim><Loading /></Card>;
+  const f = planFocus(live.data, demo, run, mission, now);
+  if (!f) return <Card title="Mission" sim><div className="empty">That scenario has ended.</div></Card>;
+  const { script, m, pkg, st, launch, back } = f;
+  const t = Date.parse(now), pct = launch && back ? Math.min(100, Math.max(0, ((t - launch) / (back - launch)) * 100)) : 0;
+  const hm = (v: number | null) => (v == null ? "—" : istTime(new Date(v).toISOString()).replace(" IST", ""));
   return (
-    <Card title={<span className="mono">{it.mission.code}</span>} sim>
-      <div className="muted" style={{ margin: "2px 0 6px" }}>{it.mission.name}</div>
-      <Row label="Package" value={`${it.n_aircraft} × ${it.type.name} from ${it.base.code}`} />
-      <Row label="Launch / recover" value={`${istTime(it.launch_ts)} – ${istTime(it.recovery_ts)}`} />
-      <Row label="Tails" value={<span className="mono">{it.aircraft.map((a) => a.tail_no).join(", ")}</span>} />
-      <Row label="Crew" value={it.crew.filter((c) => ["CAPTAIN", "INSTRUCTOR", "RPA_PILOT"].includes(c.position)).map((c) => `${RANK[c.rank] ?? c.rank} ${c.name}`).join(", ") || "—"} />
-      {it.sortie && <Row label="Sortie" value={<><span className="mono">{it.sortie.code}</span> <Pill status={it.sortie.status} /></>} />}
-      {it.explanation?.rows.slice(0, 3).map((r) => <Row key={r.label} label={r.label} value={r.value} />)}
-      <div style={{ marginTop: 8 }}><a href={`/planner?plan=current&item=${it.id}`}>Open in planner ›</a></div>
-    </Card>
-  );
-}
-
-function SimTrackCard({ id }: { id: string }) {
-  const t = useStore((s) => s.simTracks.find((x) => x.track_id === id));
-  if (!t) return <Card title="Simulated track" sim><div className="empty">Track has landed or left the picture.</div></Card>;
-  return (
-    <Card title={<span className="mono">{t.callsign}</span>} sim>
-      {t.kind === "SIM_UNKNOWN" ? <>
-        <div className="notice" style={{ margin: "4px 0" }}>Simulated unknown track: it approaches the border and turns away. It never crosses into India.</div>
-        <Row label="Phase" value={label(t.phase)} />
-        <Row label="Detected" value={t.detected ? "Yes, inside radar cover" : "Not yet"} />
-        {t.interceptor_base && <Row label="QRA scrambled from" value={t.interceptor_base} />}
-      </> : <>
-        <Row label="Aircraft" value={`${t.type ?? "—"} · ${t.tail_no ?? ""}`} />
-        <Row label="Sortie" value={<span className="mono">{t.sortie_code}</span>} />
-        <Row label="Mission" value={label(t.mission_type)} />
-        <Row label="Phase / status" value={`${label(t.phase)} · ${label(t.status)}`} />
-        <Row label="From" value={t.base ?? "—"} />
-      </>}
-      <Row label="Altitude / speed" value={`${feet(t.alt_m)} · ${num(t.gs_kt)} kt`} />
-      <Row label="Heading" value={`${num(t.heading_deg)}°`} />
+    <Card title={`${m.priority} ${m.name}`} sim>
+      <div className="muted" style={{ margin: "2px 0 8px" }}>{script.name}</div>
+      <Row label="Mission" value={MISSION_WORD[m.mtype]} />
+      <Row label="Package" value={pkg ? `${pkg.n} × ${pkg.type}` : "none: can't be flown as asked"} />
+      {pkg && <Row label="From" value={`${baseName(pkg.base)}${isGround(pkg.type) ? " · by road" : ""}`} />}
+      <Row label="Status" value={<span className={`fl-pill ${PLAN_STATUS[st][0]}`}>{st === "waiting" ? PLAN_STATUS[st][1] : statusWord(st, pkg?.type)}</span>} />
+      {pkg && <Row label={isGround(pkg.type) ? "Leaves / back" : "Launch / lands"} value={<span className="mono">{hm(launch)} – {hm(back)} IST</span>} />}
+      {pkg && f.approvedAt && <div className="pm-bar" aria-label={`${Math.round(pct)}% of the sortie flown`}><i style={{ width: `${pct}%` }} /></div>}
+      {pkg && <div className="dim" style={{ fontSize: 12, marginTop: 8 }}>Why: {pkg.why.join(" · ")}</div>}
+      <div style={{ marginTop: 10 }}><Link to={`/planner?run=${run}&step=4`}>Open in Planner ›</Link></div>
     </Card>
   );
 }
@@ -159,11 +136,12 @@ function LiveCard({ track, hex }: { track?: LiveTrack; hex: string }) {
       <Row label="Type" value={a?.type ?? track.desc ?? track.icao_type ?? "—"} />
       <Row label="Registration" value={a?.registration ?? track.reg ?? "—"} />
       <Row label="Operator" value={a?.registered_owner ?? track.operator ?? "—"} />
-      {r && <Row label="Route" value={`${r.origin?.iata_code ?? "?"} → ${r.destination?.iata_code ?? "?"}`} />}
+      {r && <Row label="Route" value={<>{`${r.origin?.iata_code ?? "?"} → ${r.destination?.iata_code ?? "?"}`}
+        {(r.origin?.name || r.destination?.name) && <div className="dim" style={{ fontSize: 12 }}>{shortAirport(r.origin?.name) || "?"} → {shortAirport(r.destination?.name) || "?"}</div>}</>} />}
       <Row label="Flight path" value={recorded || destination ? <>
-        {!!recorded && <span>Recorded trail · {recorded} points</span>}
+        {!!recorded && <span>Recorded trail · {recorded} point{recorded === 1 ? "" : "s"}</span>}
         {!!recorded && destination && <br />}
-        {destination && <span>Scheduled route shown</span>}
+        {destination && <span>Scheduled to {r?.destination?.iata_code ?? "destination"}</span>}
       </> : <strong>Flight path unavailable</strong>} />
       <Row label="Altitude" value={track.alt_m != null ? feet(track.alt_m) : "—"} />
       <Row label="Ground speed / track" value={`${num(track.gs_kt)} kt / ${num(track.track_deg)}°`} />

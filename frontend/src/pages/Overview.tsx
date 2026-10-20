@@ -1,52 +1,61 @@
 import { useQuery } from "@tanstack/react-query";
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { api } from "../api/client";
-import { ErrorText, Kpi, Loading, Row, Sim, ToneText, onActivate } from "../components/ui";
-import { sevTone } from "../lib/format";
+import { ErrorText, Kpi, Loading, Sim, ToneText, onActivate } from "../components/ui";
+import { INT_COLOUR, useSituations } from "../features/scenarioview";
+import { situationState, validRun } from "../features/scripts";
+import { istTime, sevTone } from "../lib/format";
 import { useStore } from "../store";
 
 interface Roll { bases: number; aircraft: number; serviceable: number; airborne: number; serviceability: number | null; qra_met: number; qra_bases: number;
-  pilots_available: number; pilots: number; below_reserve: number; ad_ok: number; ad_total: number; radar_ok: number; radar_total: number;
-  alerts_critical: number; alerts_warning: number; alerts: number }
+  pilots_available: number; pilots: number; below_reserve: number; ad_ok: number; ad_total: number; radar_ok: number; radar_total: number }
 interface BaseRow { id: number; code: string; name: string; command: string; lat: number; lon: number; aircraft: number; serviceable: number; airborne: number;
   serviceability: number | null; qra_met: boolean | null; qra_postures: number; pilots_available: number; pilots: number; atf_pct: number | null;
-  below_reserve: boolean; alerts: number; alerts_critical: number }
+  below_reserve: boolean }
 interface Ov { theatre: Roll; commands: (Roll & { code: string; name: string; operational: boolean })[]; bases: BaseRow[] }
-interface OpsSum { rows: { command: string | null; priority: string; total: number; covered: number }[]; committed_plan_id: number | null;
-  open_disruptions: number; pending_retask_id: number | null; pending_retask_summary: string | null }
 
-/** Mission coverage for the next 24 h by command and priority: values only, no scores (FR-CMD-04). */
-function MissionStrip() {
-  const q = useQuery({ queryKey: ["ops-summary"], queryFn: () => api<OpsSum>("/ops/summary"), refetchInterval: 30000 });
+const pct = (a: number, b: number) => Math.round((100 * a) / Math.max(b, 1));
+const hm = (ms: number) => istTime(new Date(ms).toISOString()).replace(" IST", "");
+
+/** The situations being handled now (D79): the same scripted state as the Planner and the Ops panel, values only (FR-CMD-04). */
+function Situations() {
+  const { sits, now, loading } = useSituations();
+  const demo = useStore((s) => s.demo);
+  const set = useStore((s) => s.set);
   const nav = useNavigate();
-  if (!q.data) return null;
-  const cmds = ["WAC", "SWAC", "CAC", "EAC", "SAC"];
-  const cell = (c: string | null, p?: string) => {
-    const rs = q.data.rows.filter((r) => (c == null || r.command === c) && (!p || r.priority === p));
-    const t = rs.reduce((a, r) => a + r.total, 0), v = rs.reduce((a, r) => a + r.covered, 0);
-    return t ? <ToneText toneName={v < t ? (p === "P1" ? "critical" : p === "P2" ? "warning" : "caution") : "ok"}>{v}/{t}</ToneText> : <span className="dim">—</span>;
-  };
+  if (loading) return null;
+  const live = sits.filter((x) => x.runId != null).length;
   return (
-    <>
-      <h2 className="section-h" style={{ fontSize: "var(--t-h2)" }}>Missions, next 24 hours
-        <span className="muted" style={{ fontSize: 13, fontWeight: 400 }}>
-          {q.data.committed_plan_id ? <>tasked by plan <a href="#" onClick={(e) => { e.preventDefault(); nav("/planner"); }}>#{q.data.committed_plan_id}</a></> : "no plan committed"}
-          {q.data.open_disruptions > 0 && <> · <ToneText toneName="warning">{q.data.open_disruptions} open disruptions</ToneText></>}
-          {q.data.pending_retask_id && <> · <a href="#" onClick={(e) => { e.preventDefault(); nav("/planner"); }}>a change to the plan is waiting</a></>}
-        </span></h2>
-      <div className="table-wrap" style={{ marginBottom: 16 }}>
-        <table className="table">
-          <thead><tr><th>Covered / requested</th><th className="right">Theatre</th>{cmds.map((c) => <th key={c} className="right">{c}</th>)}</tr></thead>
-          <tbody>
-            {["P1", "P2", "P3", "P4"].map((p) => <tr key={p}><td>{p}</td><td className="num">{cell(null, p)}</td>{cmds.map((c) => <td key={c} className="num">{cell(c, p)}</td>)}</tr>)}
-            <tr><td><b>All</b></td><td className="num">{cell(null)}</td>{cmds.map((c) => <td key={c} className="num">{cell(c)}</td>)}</tr>
-          </tbody>
-        </table>
+    <section className="ov-sec">
+      <h2 className="ov-h">Situations now <span>{live ? `${live} scenario${live === 1 ? "" : "s"} running, plus routine tasking` : "routine tasking only"}</span></h2>
+      <div className="ov-sits">
+        {sits.map((sit) => {
+          const { approvedAt, rows, flying, next } = situationState(sit.script, validRun(demo[sit.key], sit.started), now);
+          const summary = !approvedAt ? `${rows.length} missions · waiting for your decision`
+            : [`${rows.length} missions`, flying ? `${flying} under way` : null, next ? `next launch ${hm(next)}` : flying ? null : "all back"].filter(Boolean).join(" · ");
+          return (
+            <div key={sit.key} className="ov-sit" style={{ borderLeftColor: sit.runId ? INT_COLOUR[sit.script.intensity] : "var(--accent)" }}>
+              <div className="ov-sit-top"><b>{sit.script.name}</b>
+                <span className={`fl-pill ${approvedAt ? "ok" : "warn"}`}>{approvedAt ? "approved" : "decide"}</span></div>
+              <div className="ov-sit-sub">{sit.runId ? `${sit.script.category} · since ${hm(Date.parse(sit.started))}` : "today's tasking"}</div>
+              <div className="ov-sit-sum">{summary}</div>
+              <div className="ov-sit-act">
+                <Link to={`/planner?run=${sit.key}&step=${approvedAt ? 4 : 1}`}>Planner ›</Link>
+                {approvedAt && <a href="/map" onClick={(e) => { e.preventDefault(); set({ mode: "OPS", selection: null }); nav("/map"); }}>Ops map ›</a>}
+              </div>
+            </div>
+          );
+        })}
+        {live === 0 && <Link className="ov-sit ov-sit-add" to="/scenarios">+ Start a scenario</Link>}
       </div>
-    </>
+    </section>
   );
 }
+
+const Bar = ({ value, tone }: { value: number | null; tone: string }) => (
+  <div className="ov-bar" aria-hidden><i style={{ width: `${value ?? 0}%`, background: `var(--${tone})` }} /></div>
+);
 
 export function Overview() {
   const q = useQuery({ queryKey: ["overview"], queryFn: () => api<Ov>("/overview"), refetchInterval: 30000 });
@@ -58,6 +67,7 @@ export function Overview() {
   if (q.isLoading) return <div className="page"><Loading /></div>;
   if (q.error || !q.data) return <div className="page"><ErrorText error={q.error} /></div>;
   const t = q.data.theatre;
+  const ad = pct(t.ad_ok, t.ad_total), radar = pct(t.radar_ok, t.radar_total);
   const openBase = (b: BaseRow) => {
     st.set({ selection: { kind: "base", id: b.id }, panelTab: "Ov", mode: "LIVE" });
     nav("/map");
@@ -82,51 +92,67 @@ export function Overview() {
   return (
     <div className="page">
       <h1 className="page-title">Command overview <Sim /></h1>
-      <div className="kpis" style={{ gridTemplateColumns: "repeat(6, 1fr)", marginBottom: 16 }}>
-        <Kpi large label="Aircraft serviceable" value={`${t.serviceability ?? "—"}%`} sub={`${t.serviceable}/${t.aircraft}`} toneName={sevTone(t.serviceability)} />
-        <Kpi large label="QRA met" value={`${t.qra_met}/${t.qra_bases}`} sub="bases" toneName={t.qra_met < t.qra_bases ? "warning" : undefined} />
-        <Kpi large label="Pilots available" value={t.pilots_available} sub={`of ${t.pilots}`} />
-        <Kpi large label="Below fuel reserve" value={t.below_reserve} sub="bases" toneName={t.below_reserve ? "critical" : undefined} />
-        <Kpi large label="AD / radar operational" value={`${Math.round((100 * t.ad_ok) / Math.max(t.ad_total, 1))}% / ${Math.round((100 * t.radar_ok) / Math.max(t.radar_total, 1))}%`} sub={`${t.ad_ok}/${t.ad_total} · ${t.radar_ok}/${t.radar_total}`} />
-        <Kpi large label="Open alerts" value={t.alerts} sub={<><ToneText toneName="critical">{t.alerts_critical}</ToneText> · <ToneText toneName="warning">{t.alerts_warning}</ToneText></>}
-          toneName={t.alerts_critical ? "critical" : t.alerts_warning ? "warning" : undefined} onClick={() => nav("/alerts")} />
-      </div>
-      <MissionStrip />
-      <div className="grid-cmd">
-        {q.data.commands.map((c) => (
-          <div key={c.code} className="cmd-col" onClick={() => openCommand(c.code)} style={cmd === c.code ? { boxShadow: "inset 0 2px 0 var(--accent)" } : undefined}
-            role="button" tabIndex={0} aria-label={`${c.name}: show bases`}>
-            <div style={{ fontWeight: 700 }}>{c.code} <span className="dim" style={{ fontWeight: 400, fontSize: 11 }}>{c.operational ? "" : "support"}</span></div>
-            <div className="dim" style={{ fontSize: 11, marginBottom: 6 }}>{c.name}</div>
-            <Row label="Bases" value={c.bases} />
-            <Row label="Serviceable" value={c.serviceability == null ? "—" : <ToneText toneName={sevTone(c.serviceability)}>{c.serviceability}%</ToneText>} />
-            <Row label="QRA met" value={c.qra_bases ? <ToneText toneName={c.qra_met < c.qra_bases ? "warning" : "ok"}>{c.qra_met}/{c.qra_bases}</ToneText> : "—"} />
-            <Row label="Pilots avail." value={c.pilots_available} />
-            <Row label="Below reserve" value={c.below_reserve ? <ToneText toneName="critical">{c.below_reserve}</ToneText> : 0} />
-            <Row label="Alerts" value={c.alerts_critical ? <ToneText toneName="critical">{c.alerts}</ToneText> : c.alerts} />
-          </div>
-        ))}
-      </div>
-      <h2 className="section-h" style={{ fontSize: "var(--t-h2)" }}>Bases {cmd && <span className="muted" style={{ fontSize: 14 }}>in {cmd} · <a href="#" onClick={(e) => { e.preventDefault(); setCmd(null); }}>show all</a></span>}</h2>
-      <div className="table-wrap">
-        <table className="table">
-          <thead><tr>{th("code", "Base", false)}{th("command", "Cmd", false)}{th("aircraft", "Aircraft")}{th("serviceability", "S %")}
-            {th("qra_met", "QRA", false)}{th("pilots_available", "Pilots avail.")}{th("atf_pct", "ATF %")}{th("alerts", "Alerts")}</tr></thead>
-          <tbody>
-            {rows.map((b) => (
-              <tr key={b.id} onClick={() => openBase(b)} style={{ cursor: "pointer" }} tabIndex={0} onKeyDown={onActivate(() => openBase(b))}>
-                <td><span className="mono">{b.code}</span> {b.name.replace("Air Force Station ", "")}</td><td>{b.command}</td>
-                <td className="num">{b.aircraft}</td>
-                <td className="num"><ToneText toneName={sevTone(b.serviceability)}>{b.serviceability ?? "—"}</ToneText></td>
-                <td>{b.qra_postures ? <ToneText toneName={b.qra_met ? "ok" : "critical"}>{b.qra_met ? "Met" : "Short"}</ToneText> : <span className="dim">—</span>}</td>
-                <td className="num">{b.pilots_available}/{b.pilots}</td>
-                <td className="num"><ToneText toneName={b.below_reserve ? "critical" : (b.atf_pct ?? 100) < 40 ? "caution" : "ok"}>{b.atf_pct ?? "—"}</ToneText></td>
-                <td className="num">{b.alerts ? <ToneText toneName={b.alerts_critical ? "critical" : "warning"}>{b.alerts}</ToneText> : 0}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
+      <p className="muted ov-lead">Readiness across the theatre and the situations being handled now. Every figure is simulated.</p>
+
+      <section className="ov-sec">
+        <h2 className="ov-h">Readiness <span>theatre, {t.bases} bases</span></h2>
+        <div className="kpis" style={{ gridTemplateColumns: "repeat(6, 1fr)" }}>
+          <Kpi large label="Aircraft serviceable" value={`${t.serviceability ?? "—"}%`} bar={t.serviceability} sub={`${t.serviceable} of ${t.aircraft}`} toneName={sevTone(t.serviceability)} />
+          <Kpi large label="QRA met" value={`${t.qra_met}/${t.qra_bases}`} bar={pct(t.qra_met, t.qra_bases)} sub="bases holding their alert"
+            toneName={t.qra_met < t.qra_bases ? "warning" : "ok"} />
+          <Kpi large label="Pilots available" value={t.pilots_available} bar={pct(t.pilots_available, t.pilots)} sub={`of ${t.pilots}`} />
+          <Kpi large label="Fuel below reserve" value={t.below_reserve} sub={t.below_reserve ? "bases" : "no base below reserve"} toneName={t.below_reserve ? "critical" : "ok"} />
+          <Kpi large label="Air defence ready" value={`${ad}%`} bar={ad} sub={`${t.ad_ok} of ${t.ad_total} sites`} toneName={sevTone(ad)} />
+          <Kpi large label="Radar operational" value={`${radar}%`} bar={radar} sub={`${t.radar_ok} of ${t.radar_total} sites`} toneName={sevTone(radar)} />
+        </div>
+      </section>
+
+      <Situations />
+
+      <section className="ov-sec">
+        <h2 className="ov-h">Commands <span>click one to list its bases and centre the map on it</span></h2>
+        <div className="ov-cmds">
+          {q.data.commands.map((c) => (
+            <div key={c.code} className={`ov-cmd${cmd === c.code ? " on" : ""}`} onClick={() => openCommand(c.code)} onKeyDown={onActivate(() => openCommand(c.code))}
+              role="button" tabIndex={0} aria-pressed={cmd === c.code} aria-label={`${c.name}: show bases`}>
+              <div className="ov-cmd-top"><b>{c.code}</b>{!c.operational && <span className="dim">support</span>}<span className="dim ov-cmd-n">{c.bases} bases</span></div>
+              <div className="ov-cmd-name">{c.name}</div>
+              <div className="ov-cmd-svc">{c.serviceability == null ? <span className="dim">—</span> : <ToneText toneName={sevTone(c.serviceability)}>{c.serviceability}%</ToneText>}
+                <span className="dim">{c.serviceability == null ? "no aircraft" : "serviceable"}</span></div>
+              <Bar value={c.serviceability} tone={sevTone(c.serviceability)} />
+              <div className="ov-cmd-facts">
+                <span>QRA {c.qra_bases ? <ToneText toneName={c.qra_met < c.qra_bases ? "warning" : "ok"}>{c.qra_met}/{c.qra_bases}</ToneText> : "—"}</span>
+                <span>Pilots {c.pilots_available}</span>
+                <span>Fuel {c.below_reserve ? <ToneText toneName="critical">{c.below_reserve} low</ToneText> : "ok"}</span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="ov-sec">
+        <h2 className="ov-h">Bases {cmd ? <span>in {cmd} · <a href="#" onClick={(e) => { e.preventDefault(); setCmd(null); }}>show all</a></span>
+          : <span>lowest serviceability first · click a base to open it on the map</span>}</h2>
+        <div className="table-wrap">
+          <table className="table">
+            <thead><tr>{th("code", "Base", false)}{th("command", "Command", false)}{th("aircraft", "Aircraft")}{th("serviceability", "Serviceable")}
+              {th("qra_met", "QRA", false)}{th("pilots_available", "Pilots available")}{th("atf_pct", "Fuel (ATF %)")}</tr></thead>
+            <tbody>
+              {rows.map((b) => (
+                <tr key={b.id} onClick={() => openBase(b)} style={{ cursor: "pointer" }} tabIndex={0} onKeyDown={onActivate(() => openBase(b))}>
+                  <td><span className="mono">{b.code}</span> {b.name.replace("Air Force Station ", "")}</td><td>{b.command}</td>
+                  <td className="num">{b.aircraft}</td>
+                  <td className="num"><span className="ov-cell-bar"><ToneText toneName={sevTone(b.serviceability)}>{b.serviceability == null ? "—" : `${b.serviceability}%`}</ToneText>
+                    <Bar value={b.serviceability} tone={sevTone(b.serviceability)} /></span></td>
+                  <td>{b.qra_postures ? <ToneText toneName={b.qra_met ? "ok" : "critical"}>{b.qra_met ? "Met" : "Short"}</ToneText> : <span className="dim">—</span>}</td>
+                  <td className="num">{b.pilots_available}/{b.pilots}</td>
+                  <td className="num"><ToneText toneName={b.below_reserve ? "critical" : (b.atf_pct ?? 100) < 40 ? "caution" : "ok"}>{b.atf_pct ?? "—"}</ToneText></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </section>
     </div>
   );
 }

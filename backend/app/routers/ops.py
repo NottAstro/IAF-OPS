@@ -388,7 +388,8 @@ def plans(kind: str = "", status: str = "", limit: int = 20, user: dict = Depend
     pending = db.scalars(select(M.Plan).where(M.Plan.kind == "RETASK", M.Plan.status == "PROPOSED").order_by(M.Plan.id.desc())).first()
     review = store.under_review(db)          # D56: any proposal waiting (full plan or re-task)
     return {"items": rows, "committed_id": cp.id if cp else None, "pending_retask_id": pending.id if pending else None,
-            "pending_id": review.id if review is not None and review.status in ("PROPOSED", "APPROVED") else None}
+            "pending_id": review.id if review is not None and review.status in ("PROPOSED", "APPROVED") else None,
+            "pending_kind": review.kind if review is not None and review.status in ("PROPOSED", "APPROVED") else None}
 
 
 class ChooseIn(BaseModel):

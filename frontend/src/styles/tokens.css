@@ -57,14 +57,32 @@
   --base-other: #9db2d3;
   --base-hostile: #f87171;
   --base-neutral: #34d399;
-  /* equipment top views */
-  --bp-fill: #e1e9f2;
-  --bp-fill-2: #c3d2e2;
-  --bp-ink: #1a2c43;
-  --bp-line: rgb(26 44 67 / 0.45);
-  --bp-dark: #5c7697;
-  --bp-disc: rgb(225 233 242 / 0.07);
-  --bp-red: #d64545;
+  /* aircraft top views (D68): painted airframe per family, light panel lines, dark glazing. No national markings
+     (AGENTS.md §8: no roundel, fin flash or ensign). hi = highlight, mid = paint, lo = shaded edge */
+  --ac-fighter-hi: #969ca2;
+  --ac-fighter-mid: #7c8288;
+  --ac-fighter-lo: #5c6267;
+  --ac-transport-hi: #c2c8ce;
+  --ac-transport-mid: #a6adb4;
+  --ac-transport-lo: #737b83;
+  --ac-trainer-hi: #f1f4f7;
+  --ac-trainer-mid: #d6dce2;
+  --ac-trainer-lo: #959ea7;
+  --ac-heli-hi: #a3a892;
+  --ac-heli-mid: #737a64;
+  --ac-heli-lo: #4a4f40;
+  --ac-uav-hi: #e2e6ea;
+  --ac-uav-mid: #bcc3ca;
+  --ac-uav-lo: #848c94;
+  --ac-ink: #2a3036;
+  --ac-line: rgb(236 241 246 / 0.62);
+  --ac-dark: #1d2125;
+  --ac-dark-hi: #4a5158;
+  --ac-glass-lo: #070a0e;
+  --ac-glass-hi: #34414f;
+  --ac-glint: rgb(255 255 255 / 0.32);
+  --ac-radome: #b9bec3;
+  --ac-disc: rgb(225 233 242 / 0.07);
   /* elevation tint, sea level → 6000 m */
   --relief-0: #0a1628;
   --relief-1: #0f2340;

@@ -1,4 +1,6 @@
 """Map + side-panel data: bases, live base status, base summary, public cards, defence sites (FR-BASE, FR-MAP-13..15)."""
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.orm import Session
@@ -200,22 +202,40 @@ def public_card(base_id: int, user: dict = Depends(current_user), db: Session = 
             "note": "Public information only — no inventory held."}
 
 
+COVERAGE = {"radar": "radar_site s JOIN radar_type t ON t.id = s.radar_type_id",
+            "ad": "air_defence_battery s JOIN ad_system_type t ON t.id = s.ad_system_type_id"}
+
+
+@router.get("/sites/coverage")
+def coverage(kind: str, user: dict = Depends(current_user), db: Session = Depends(get_db)):
+    """Ops map (D63): the merged coverage of the radar or AD sites still working, one outline instead of a ring per
+    site. Sites in maintenance or offline leave holes."""
+    if kind not in COVERAGE:
+        raise HTTPException(404, "Unknown coverage kind")
+    r = db.execute(text(f"""SELECT count(*) AS n, ST_AsGeoJSON(ST_SimplifyPreserveTopology(
+                                ST_Union(ST_Buffer(s.geom::geography, t.max_range_km * 1000)::geometry), 0.01), 4) AS g
+                            FROM {COVERAGE[kind]} WHERE s.status IN ('OPERATIONAL', 'DEGRADED')""")).one()
+    return {"type": "FeatureCollection", "features": [{"type": "Feature", "geometry": json.loads(r.g),
+            "properties": {"kind": kind, "sites": r.n, "simulated": True}}] if r.g else []}
+
+
 @router.get("/sites/{kind}")
 def sites(kind: str, user: dict = Depends(current_user), db: Session = Depends(get_db)):
     if kind == "ad":
         return rows(db, """SELECT d.id, d.code, d.status, d.launchers_ready, d.launchers_total, t.name AS system, t.category,
-                                  t.max_range_km, ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon, b.code AS base
+                                  t.max_range_km, ST_Y(d.geom) AS lat, ST_X(d.geom) AS lon, b.code AS base, true AS simulated
                            FROM air_defence_battery d JOIN ad_system_type t ON t.id = d.ad_system_type_id
                            LEFT JOIN base b ON b.id = d.protected_base_id""")
     if kind == "radars":
         return rows(db, """SELECT r.id, r.code, r.status, t.name AS type, t.category, t.max_range_km,
-                                  ST_Y(r.geom) AS lat, ST_X(r.geom) AS lon, b.code AS base
+                                  ST_Y(r.geom) AS lat, ST_X(r.geom) AS lon, b.code AS base, true AS simulated
                            FROM radar_site r JOIN radar_type t ON t.id = r.radar_type_id LEFT JOIN base b ON b.id = r.base_id""")
     if kind == "comms":
-        return rows(db, """SELECT n.id, n.code, n.node_type, n.status, ST_Y(n.geom) AS lat, ST_X(n.geom) AS lon, b.code AS base
+        return rows(db, """SELECT n.id, n.code, n.node_type, n.status, ST_Y(n.geom) AS lat, ST_X(n.geom) AS lon, b.code AS base,
+                                  true AS simulated
                            FROM comms_node n LEFT JOIN base b ON b.id = n.base_id""")
     if kind == "comms-links":
         return rows(db, """SELECT l.id, l.medium, l.status, ST_Y(a.geom) AS lat_a, ST_X(a.geom) AS lon_a,
-                                  ST_Y(b.geom) AS lat_b, ST_X(b.geom) AS lon_b
+                                  ST_Y(b.geom) AS lat_b, ST_X(b.geom) AS lon_b, true AS simulated
                            FROM comms_link l JOIN comms_node a ON a.id = l.node_a_id JOIN comms_node b ON b.id = l.node_b_id""")
     raise HTTPException(404, "Unknown site kind")

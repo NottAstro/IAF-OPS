@@ -49,7 +49,11 @@ export const RANK: Record<string, string> = {
   FG_OFFR: "Fg Offr", FLT_LT: "Flt Lt", SQN_LDR: "Sqn Ldr", WG_CDR: "Wg Cdr", GP_CAPT: "Gp Capt", AIR_CMDE: "Air Cmde",
 };
 
-const UPPER = /\b(qra|hq|ad|sam|alg|aog|iaf|atf|gse|uav|uas|wso|rpa|qfi|nvg|aar|isr|cas|hadr|fbsu|vhf|uhf|hf|gs|c2|mpr|lltr|lllr|lr|mr|sr|vshorads|ifr|vfr|mvfr|lifr|wx|ext|ac|gpu|atc|c-uas|uas)\b/gi;
+/** Comms node types in words (base panel, Ops map, site card). */
+export const COMMS_NAME: Record<string, string> = { DATALINK_GS: "Data link ground station", VUHF_RELAY: "V/UHF radio relay", HF_STATION: "HF radio station",
+  SATCOM_GS: "Satellite terminal", C2_NODE: "Command & control node", NETWORK_HUB: "Network hub" };
+
+const UPPER = /\b(qra|hq|ad|sam|alg|aog|iaf|atf|gse|uav|uas|wso|rpa|qfi|nvg|aar|isr|cas|hadr|fbsu|vhf|uhf|hf|gs|c2|mpr|lltr|lllr|lr|mr|sr|vshorads|ifr|vfr|mvfr|lifr|wx|ext|ac|gpu|atc|c-uas|uas|hsd|aew)\b/gi;
 export const label = (s: string | null | undefined): string =>
   s ? s.replace(/_/g, " ").toLowerCase().replace(/^./, (c) => c.toUpperCase()).replace(UPPER, (m) => m.toUpperCase()) : "—";
 

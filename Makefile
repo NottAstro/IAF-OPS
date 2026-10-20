@@ -3,7 +3,7 @@ PY := .venv/bin/python
 PG := /opt/homebrew/opt/postgresql@17/bin
 NODE := export PATH="$$(ls -d $$HOME/.nvm/versions/node/v24*/bin | tail -1):$$PATH";
 
-.PHONY: setup db pipeline osm stations seed dev stop test check netcheck curated
+.PHONY: setup db pipeline osm stations seed dev demo stop test check netcheck curated
 
 setup:            ## Python venv + all npm installs (needs: brew install postgresql@17 postgis osmium-tool; nvm Node 24)
 	python3.13 -m venv .venv && .venv/bin/pip install -q -r backend/requirements.txt
@@ -33,6 +33,11 @@ seed:             ## regenerate all synthetic data (deterministic for SEED + SIM
 	cd backend && ../$(PY) -m generator
 
 dev:              ## run wind sidecar + API + web together (Ctrl-C stops)
+	bash scripts/dev.sh
+
+demo:             ## fresh demo: stop, regenerate the synthetic data (~20 s), start again (Ctrl-C stops)
+	$(MAKE) stop
+	cd backend && ../$(PY) -m generator
 	bash scripts/dev.sh
 
 stop:             ## stop anything listening on the wind / API / web ports

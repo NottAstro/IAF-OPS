@@ -6,23 +6,27 @@ import "maplibre-gl/dist/maplibre-gl.css";
 import type { Feature, Geometry, Point } from "geojson";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../api/client";
-import { scheduledDestination, useLivePath } from "../api/live";
+import { scheduledAirports, useLivePath } from "../api/live";
 import { type ConnectionSummary, type NearbyBase, useRoadConnection } from "../api/connectivity";
-import type { Base, BaseStatus, LiveTrack, Site } from "../api/types";
-import { LIVE_GROUP, type LayerId, type Selection, layerMode, useStore } from "../store";
+import type { Base, BaseStatus, LiveScenario, LiveTrack, Site } from "../api/types";
+import { GLYPH, MISSION_WORD, ROUTINE, type Status, baseName, chosen, isGround, planFocus, routineStart, scriptFor, slotOffset, statusAt, statusWord, timesOf, validRun } from "../features/scripts";
+import { LIVE_GROUP, type LayerId, type Selection, layerFixed, layerMode, useStore } from "../store";
 import { FLIGHT_CAT_TOKEN, cssVar } from "./colors";
-import { CONNECTIVITY_LAYERS, FOCUS_LAYERS, INDIA_BOUNDS, INTERACTIVE, LAYER_IDS, OVERLAY_BEFORE, REGION_BOUNDS, buildStyle } from "./style";
-import { type BlockOpts, baseBlock, glyphIcon, iconImage } from "./symbols";
+import { CONNECTIVITY_LAYERS, FOCUS_DIM, FOCUS_LAYERS, FOCUS_PKG_LAYERS, INDIA_BOUNDS, INTERACTIVE, LAYER_IDS, OVERLAY_BEFORE, REGION_BOUNDS, RING_LAYERS, buildStyle } from "./style";
+import { type BlockOpts, baseBlock, glyphIcon, iconImage, missionIcon } from "./symbols";
 import { useWind } from "./wind";
 import { greatCircle } from "./flightPath";
+import { COMMS_NAME, istTime, label } from "../lib/format";
 
 interface Metar { icao: string; lat: number; lon: number; flight_category: string }
 interface Near { name: string; code?: string; icao?: string; iata?: string; lat: number; lon: number; distance_km: number | string }
 interface Connectivity { rail: Near[]; rail_major: Near[]; airports: Near[]; bases: NearbyBase[] }
 interface Fc { type: "FeatureCollection"; features: Feature[] }
-interface WxImpact { base_id: number; code: string; lon: number; lat: number; worst: string; at: string | null; runway_closed: boolean }
 
 let current: MlMap | null = null;
+/** Mission-area colour by state, the same tones as the Ops panel's mission rows (D78). */
+const MISSION_TONE: Record<Status, string> = { waiting: "--warning", approved: "--ok", airborne: "--sim", "on station": "--sim",
+  returning: "--sim", landed: "--neutral", "not flown": "--neutral" };
 const PANEL_SHIFT = -200; // keep a selected base clear of the side panel
 const TILT = 42;          // default 3D camera pitch in degrees (higher shows the horizon at country zoom)
 const FOCUS_KM = 60;
@@ -36,6 +40,23 @@ const circle = (lon: number, lat: number, km: number) =>
     const a = (i / 96) * Math.PI * 2;
     return [lon + (km / (111.32 * Math.cos((lat * Math.PI) / 180))) * Math.sin(a), lat + (km / 111.32) * Math.cos(a)];
   });
+
+/** Coverage pop (D63): a radar / AD site's own ring, labelled at its north edge. The selected site's ring stays; the
+ * hovered one follows the pointer. Both share the `ops-ring` source. */
+type SiteKind = "radar" | "ad" | "comms";
+const SITE_LAYER: Record<string, SiteKind> = { "ops-radar-sites": "radar", "ops-ad-sites": "ad", "ops-comms": "comms",
+  "ops-radar-sites-near": "radar", "ops-ad-sites-near": "ad", "ops-comms-near": "comms" };
+const COMMS_RANK: Record<string, number> = { C2_NODE: 0, NETWORK_HUB: 0, SATCOM_GS: 1, HF_STATION: 2 };
+let ringSel: Feature[] = [];
+let ringHover: Feature[] = [];
+let hoverKey = "";
+const drawRings = (m: MlMap) => setData(m, "ops-ring", [...ringSel, ...ringHover]);
+function siteRing(p: Record<string, unknown>, lon: number, lat: number): Feature[] {
+  const km = Number(p.range_km);
+  if (!km || p.kind === "comms") return [];
+  return [feature({ type: "Polygon", coordinates: [circle(lon, lat, km)] }, { kind: p.kind }),
+    point(lon, lat + km / 111.32, { kind: p.kind, label: `${p.code} · ${p.name} · ${km} km` })];
+}
 
 /** Satellite IR (bright = cold cloud tops) → white, translucent cloud cover over the dark map. */
 let cloudsProtocol = false;
@@ -67,10 +88,8 @@ function registerClouds() {
 /** Map a clicked feature to a store selection. */
 function toSelection(f: MapGeoJSONFeature): Selection {
   const p = f.properties as Record<string, string | number>;
-  if (f.layer.id === "ops-sim" || f.layer.id === "ops-unk") return { kind: "simtrack", id: String(p.track_id) };
-  if (f.layer.id === "ops-missions") return { kind: "mission", id: Number(p.id) };
-  if (f.layer.id === "ops-routes") return { kind: "route", id: Number(p.id) };
-  if (f.layer.id === "ops-ad-sites") return { kind: "ad", id: Number(p.id) };
+  if (f.layer.id === "ops-missions") return { kind: "plan-mission", run: String(p.run), mission: String(p.mid) };   // D71: focus the package
+  if (SITE_LAYER[f.layer.id]) return { kind: SITE_LAYER[f.layer.id], id: Number(p.id) };
   const [lon, lat] = (f.geometry as Point).coordinates;
   const id = f.layer.id;
   if (id === "live-air") return { kind: "live", hex: String(p.hex) };
@@ -84,12 +103,8 @@ function hoverText(f: MapGeoJSONFeature): [string, string] {
   const p = f.properties as Record<string, string | number | undefined>;
   const id = f.layer.id;
   if (id === "connectivity-bases") return [String(p.code), `${p.name}${p.distance_km != null ? ` · ${p.distance_km} km direct` : " · source base"}`];
-  if (id === "ops-sim" || id === "ops-unk") return [`${p.label} (simulated)`, String(p.desc ?? "")];
-  if (id === "ops-missions") return [String(p.code), `${p.priority} · ${p.name} · ${p.state}${p.tag && p.tag !== "Routine" ? ` · ${p.tag}` : ""}`];
-  if (id === "ops-scenarios") return [`${p.scenario} (simulated)`, String(p.label ?? "")];
-  if (id === "ops-transfers" || id === "ops-transfers-planned") return [String(p.label), p.state === "in_transit" ? "on the road (simulated)" : "recommended, not yet approved"];
-  if (id === "ops-routes") return [`${p.code} (${p.priority})`, `${p.n_aircraft} × ${p.type} from ${p.base}${p.proposed ? " · proposed" : ""}`];
-  if (id === "ops-ad-sites") return [`${p.code} (simulated)`, String(p.system ?? "")];
+  if (id === "ops-missions") return [String(p.code), `${p.priority} · ${p.name} · ${p.state} · click to follow it`];
+  if (SITE_LAYER[id]) return [`${p.code} (simulated)`, [p.name, p.range_km ? `${p.range_km} km` : "", String(p.status ?? "").toLowerCase()].filter(Boolean).join(" · ")];
   if (id === "live-air") return [String(p.label || p.hex), String(p.desc ?? "")];
   if (id.startsWith("bases-"))
     return [String(p.name), [p.code, p.svc != null && p.svc !== "" ? `${p.svc}% serviceable` : "", p.qra ? `QRA ${p.qra}` : "",
@@ -147,6 +162,13 @@ export function MapView({ hidden }: { hidden: boolean }) {
       useStore.getState().set({ cursor: { lat: e.lngLat.lat, lon: e.lngLat.lng, elev: elev == null ? null : elev / (terrain?.exaggeration || 1) } });
       const f = m.queryRenderedFeatures(e.point, { layers: live() })[0];
       m.getCanvas().style.cursor = f ? "pointer" : "";
+      const key = f && SITE_LAYER[f.layer.id] ? `${f.layer.id}:${f.properties.id}` : "";
+      if (key !== hoverKey) {   // pop the hovered radar / AD site's own ring
+        hoverKey = key;
+        const [lon, lat] = key ? (f!.geometry as Point).coordinates : [0, 0];
+        ringHover = key ? siteRing(f!.properties, lon, lat) : [];
+        drawRings(m);
+      }
       if (!f) return void tip.remove();
       const [title, sub] = hoverText(f);
       tipEl.innerHTML = "";
@@ -154,7 +176,10 @@ export function MapView({ hidden }: { hidden: boolean }) {
       if (sub) tipEl.append(Object.assign(document.createElement("div"), { textContent: sub }));
       tip.setLngLat(e.lngLat).setDOMContent(tipEl).addTo(m);
     });
-    m.on("mouseout", () => tip.remove());
+    m.on("mouseout", () => {
+      tip.remove();
+      if (hoverKey) { hoverKey = ""; ringHover = []; drawRings(m); }
+    });
     m.on("click", (e) => {
       const st = useStore.getState();
       if (st.picking === "mission" && st.missionDraft) {   // Missions page "Pick on map": hand the point back and return
@@ -169,11 +194,13 @@ export function MapView({ hidden }: { hidden: boolean }) {
       }
       const sel = f ? toSelection(f) : null;
       if (sel) return st.set({ selection: sel, panelTab: sel.kind === "base" && st.mode === "INFRA" ? "Bw" : "Ov" });
+      if (f) return;   // hover-only features (transfer lines) keep the current selection
       const { lat, lng: lon } = e.lngLat;
       st.set({ selection: st.mode === "WX" ? { kind: "wx", lat, lon } : null });
     });
     return () => {
       current = null;
+      ringSel = []; ringHover = []; hoverKey = "";
       tip.remove();
       m.remove();
       setMap(null);
@@ -201,6 +228,8 @@ export function MapView({ hidden }: { hidden: boolean }) {
     queryKey: ["wx", "metars"], queryFn: () => api<{ stations: Metar[] }>("/wx/metars"), refetchInterval: 300000,
     enabled: s.mode === "WX" && s.wx.metar,
   });
+  const owm = useQuery({ queryKey: ["wx-status"], queryFn: () => api<{ owm: boolean }>("/wx/status"), enabled: s.mode === "WX" });
+  const rain = s.wx.rain && owm.data?.owm === true;   // without an OWM key the rain tiles only 404
   const selBase = s.selection?.kind === "base" ? s.selection.id : null;
   const focus = s.mode === "INFRA" && !hidden && s.connectivityFocus?.sourceId === selBase ? s.connectivityFocus : null;
   const road = useRoadConnection(focus?.sourceId ?? null, focus?.destinationId ?? null, focus?.mode === "road");
@@ -216,82 +245,116 @@ export function MapView({ hidden }: { hidden: boolean }) {
 
   // ---------------------------------------------------------------- operations view (Phase 2, all simulated)
   const ops = s.mode === "OPS" && !hidden;
-  const airZones = useQuery({ queryKey: ["ops-zones", "airspace"], queryFn: () => api<Fc>("/ops/zones?kind=airspace"), enabled: ops && s.layers["ops-airspace"], staleTime: 60000 });
   const threatZones = useQuery({ queryKey: ["ops-zones", "threat"], queryFn: () => api<Fc>("/ops/zones?kind=threat"), enabled: ops, refetchInterval: 30000 });
-  const missionsGeo = useQuery({ queryKey: ["ops-missions"], queryFn: () => api<Fc>("/ops/missions/geo"), enabled: ops, refetchInterval: 30000 });
-  const plansMeta = useQuery({ queryKey: ["plans", "meta"], queryFn: () => api<{ committed_id: number | null; pending_retask_id: number | null;
-    items: { id: number; kind: string; status: string }[] }>("/ops/plans?limit=1"), enabled: ops, refetchInterval: 20000 });
-  const cid = plansMeta.data?.committed_id;
-  // D56: a full plan proposed for the situation (nothing committed yet) is drawn as proposed, like a re-task
-  const fresh = !cid && plansMeta.data?.items[0]?.kind === "PLAN" && plansMeta.data.items[0].status === "PROPOSED" ? plansMeta.data.items[0].id : null;
-  const pidr = plansMeta.data?.pending_retask_id ?? fresh;
-  const effects = useQuery({ queryKey: ["ops-scenarios"], queryFn: () => api<Fc>("/ops/scenarios/effects/geo"), enabled: ops, refetchInterval: 15000 });
-  const transfersGeo = useQuery({ queryKey: ["ops-transfers"], queryFn: () => api<Fc>("/ops/transfers/geo"), enabled: ops, refetchInterval: 20000 });
-  const routes = useQuery({ queryKey: ["ops-routes", cid], queryFn: () => api<Fc>(`/ops/plans/${cid}/routes`), enabled: ops && !!cid });
-  const proposed = useQuery({ queryKey: ["ops-routes", "proposal", pidr], queryFn: () => api<Fc>(`/ops/plans/${pidr}/routes`), enabled: ops && !!pidr });
-  const radars = useQuery({ queryKey: ["sites", "radars"], queryFn: () => api<Site[]>("/sites/radars"), enabled: ops && s.layers["ops-radar"], staleTime: 60000 });
-  const ads = useQuery({ queryKey: ["sites", "ad"], queryFn: () => api<Site[]>("/sites/ad"), enabled: ops && (s.layers["ops-ad"] || s.layers["ops-ad-sites"]), staleTime: 60000 });
-  const wxImpact = useQuery({ queryKey: ["ops-wx"], queryFn: () => api<WxImpact[]>("/ops/wx-impact"), enabled: ops, refetchInterval: 60000 });
+  // D66, D76: the Ops map draws the scripted missions' areas; a package's aircraft and route appear when it is focused (D71)
+  const liveRuns = useQuery({ queryKey: ["scenarios", "live"], queryFn: () => api<LiveScenario[]>("/ops/scenarios/live"), enabled: ops, refetchInterval: 15000 });
+  const simNow = s.simClock?.sim_now;
+  const missionAreas = useMemo(() => {
+    const now = simNow ?? new Date().toISOString();
+    const runs = (liveRuns.data ?? []).flatMap((r) => {
+      const script = scriptFor(r.code);
+      return script ? [{ key: String(r.id), script, run: validRun(s.demo[String(r.id)], r.started_sim) }] : [];
+    });
+    runs.push({ key: "routine", script: ROUTINE, run: validRun(s.demo.routine, routineStart(now)) });
+    // mission areas are the scripted missions too, so the map never shows a mission the Planner says is tasked as open;
+    // they take the Ops panel's state colours (D78)
+    const missions = runs.flatMap(({ key, script, run }) => script.missions.map((m) => {
+      const pkg = chosen(m, run?.dec[m.id]), approvedAt = run?.approvedAt ?? null, st = statusAt(pkg, approvedAt, now);
+      const sub = st === "waiting" ? "waiting for your decision"
+        : st === "approved" && pkg ? `${isGround(pkg.type) ? "leaves" : "launch"} ${istTime(new Date(timesOf(pkg, approvedAt, now).launch)).replace(" IST", "")}`
+        : statusWord(st, pkg?.type);
+      const color = cssVar(MISSION_TONE[st]);
+      return point(m.target[0], m.target[1], { scripted: true, run: key, mid: m.id, id: `${key}-${m.id}`, code: m.name, name: `${MISSION_WORD[m.mtype]} · ${script.name}`,
+        priority: m.priority, state: sub, sub, label: `${m.priority} ${m.name}`, color, icon: missionIcon(m.mtype, color) });
+    }));
+    return missions;
+  }, [liveRuns.data, s.demo, simNow]);
+  // Simulated sites live in the Infra view (D75) and load whenever it is open, so the panel can count them while off (D63).
+  const infra = s.mode === "INFRA" && !hidden;
+  const radars = useQuery({ queryKey: ["sites", "radars"], queryFn: () => api<Site[]>("/sites/radars"), enabled: infra, staleTime: 60000 });
+  const ads = useQuery({ queryKey: ["sites", "ad"], queryFn: () => api<Site[]>("/sites/ad"), enabled: infra, staleTime: 60000 });
+  const comms = useQuery({ queryKey: ["sites", "comms"], queryFn: () => api<Site[]>("/sites/comms"), enabled: infra, staleTime: 60000 });
+  const covRadar = infra && s.layers["ops-coverage"] && s.layers["ops-radar-sites"];
+  const covAd = infra && s.layers["ops-coverage"] && s.layers["ops-ad-sites"];
+  const radarCover = useQuery({ queryKey: ["sites", "coverage", "radar"], queryFn: () => api<Fc>("/sites/coverage?kind=radar"), enabled: covRadar, staleTime: 60000 });
+  const adCover = useQuery({ queryKey: ["sites", "coverage", "ad"], queryFn: () => api<Fc>("/sites/coverage?kind=ad"), enabled: covAd, staleTime: 60000 });
 
   useEffect(() => {
     if (!map) return;
-    setData(map, "ops-zones", [
-      ...(airZones.data?.features ?? []).map((f) => ({ ...f, properties: { ...f.properties, layer: "airspace" } })),
-      ...(threatZones.data?.features ?? []).map((f) => ({ ...f, properties: { ...f.properties, layer: "threat" } })),
-    ]);
-  }, [map, airZones.data, threatZones.data]);
+    setData(map, "ops-zones", (threatZones.data?.features ?? []).map((f) => ({ ...f, properties: { ...f.properties, layer: "threat" } })));
+  }, [map, threatZones.data]);
+  const sites = useMemo(() => {
+    const site = (kind: SiteKind, x: Site, name: string, rank: number) => point(x.lon, x.lat, {
+      id: x.id, kind, code: x.code, name, range_km: x.max_range_km ?? 0, status: x.status, rank });
+    return [
+      ...(radars.data ?? []).map((x) => site("radar", x, x.type ?? "Radar", -(x.max_range_km ?? 0))),
+      ...(ads.data ?? []).map((x) => site("ad", x, x.system ?? "Air defence", -(x.max_range_km ?? 0))),
+      ...(comms.data ?? []).map((x) => site("comms", x, COMMS_NAME[x.node_type ?? ""] ?? label(x.node_type), COMMS_RANK[x.node_type ?? ""] ?? 3)),
+    ];
+  }, [radars.data, ads.data, comms.data]);
+  useEffect(() => {
+    if (map) setData(map, "ops-sites", sites);
+  }, [map, sites]);
+  useEffect(() => {   // the selected radar / AD site keeps its ring
+    if (!map) return;
+    const sel = s.selection;
+    const f = sel && (sel.kind === "radar" || sel.kind === "ad")
+      ? sites.find((x) => x.properties?.kind === sel.kind && x.properties.id === sel.id) : undefined;
+    ringSel = f ? siteRing(f.properties!, ...((f.geometry as Point).coordinates as [number, number])) : [];
+    drawRings(map);
+  }, [map, sites, s.selection]);
+  useEffect(() => {
+    if (map) setData(map, "ops-coverage", [...(covRadar ? radarCover.data?.features ?? [] : []), ...(covAd ? adCover.data?.features ?? [] : [])]);
+  }, [map, covRadar, covAd, radarCover.data, adCover.data]);
+  // D71: a planner package in focus (Planner step 4, the Ops panel or a click on its mission area): its aircraft and route
+  // are drawn on the focus layers and the other mission areas fade until the card is closed.
+  const pkgSel = s.selection?.kind === "plan-mission" ? s.selection : null;
+  const pf = useMemo(() => pkgSel && ops ? planFocus(liveRuns.data, s.demo, pkgSel.run, pkgSel.mission, simNow ?? new Date().toISOString()) : null,
+    [pkgSel?.run, pkgSel?.mission, ops, liveRuns.data, s.demo, simNow]); // eslint-disable-line react-hooks/exhaustive-deps
+  const isFocused = (f: Feature) => !!pf && f.properties?.run === pkgSel?.run && f.properties?.mid === pkgSel?.mission;
+  useEffect(() => {   // counts for the Infra panel's site toggles; undefined until loaded
+    if (infra) s.set({ siteCounts: { "ops-radar-sites": radars.data?.length, "ops-ad-sites": ads.data?.length, "ops-comms": comms.data?.length } });
+  }, [infra, radars.data, ads.data, comms.data]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (map) setData(map, "ops-missions", missionAreas.filter((f) => !isFocused(f)));
+  }, [map, missionAreas, pf]); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!map) return;
-    const ring = (x: Site, layer: string) => feature({ type: "Polygon", coordinates: [circle(x.lon, x.lat, x.max_range_km ?? 10)] },
-      { layer, ok: x.status === "OPERATIONAL", code: x.code });
-    setData(map, "ops-rings", [...(radars.data ?? []).map((x) => ring(x, "radar")), ...(ads.data ?? []).map((x) => ring(x, "ad"))]);
-  }, [map, radars.data, ads.data]);
-  useEffect(() => {
-    if (map) setData(map, "ops-ad-sites", (ads.data ?? []).map((x) => point(x.lon, x.lat, { id: x.id, code: x.code, system: x.system ?? "" })));
-  }, [map, ads.data]);
-  useEffect(() => {
-    if (!map) return;
-    const changed = new Set((proposed.data?.features ?? []).filter((f) => fresh || (f.properties?.change && f.properties.change !== "KEPT"))
-      .map((f) => f.properties?.code));
-    setData(map, "ops-routes", [
-      ...(routes.data?.features ?? []).filter((f) => !changed.has(f.properties?.code)).map((f) => ({ ...f, properties: { ...f.properties, proposed: false } })),
-      ...(proposed.data?.features ?? []).filter((f) => changed.has(f.properties?.code)).map((f) => ({ ...f, properties: { ...f.properties, proposed: true } })),
-    ]);
-  }, [map, routes.data, proposed.data, fresh]);
-  useEffect(() => {
-    if (map) setData(map, "ops-scenarios", effects.data?.features ?? []);
-  }, [map, effects.data]);
-  useEffect(() => {
-    if (map) setData(map, "ops-transfers", transfersGeo.data?.features ?? []);
-  }, [map, transfersGeo.data]);
+    if (!pf) return void setData(map, "ops-focus", []);
+    const { m, pkg, ps } = pf, sim = cssVar("--sim");
+    const out: Feature[] = [point(m.target[0], m.target[1], { role: "target", label: `${m.priority} ${m.name}`, icon: missionIcon(m.mtype, sim) })];
+    if (pkg && ps) {
+      // the package's label sits ahead of the leader once airborne, or on the base while it waits there
+      const r = (ps.rot * Math.PI) / 180, what = `${pkg.n} × ${pkg.type}`;
+      out.push(feature({ type: "LineString", coordinates: [ps.home, m.target] }, { role: "route" }),
+        point(ps.home[0], ps.home[1], { role: "base", label: ps.atBase ? `${baseName(pkg.base)} · ${what}` : baseName(pkg.base) }),
+        ...Array.from({ length: pkg.n }, (_, i) => point(ps.pos[0], ps.pos[1], { role: "ac", rot: ps.rot, off: slotOffset(i, pkg.n, ps.atBase),
+          icon: glyphIcon(GLYPH(pkg.type), sim, 24), label: i === 0 && !ps.atBase ? `${what} SIM` : "",
+          toff: [2.6 * Math.sin(r), -2.6 * Math.cos(r)] })));
+    }
+    setData(map, "ops-focus", out);
+  }, [map, pf]);
+  const focusOn = !!pf;
   useEffect(() => {
     if (!map) return;
-    const tasked = cssVar("--ok"), open = cssVar("--caution"), req = cssVar("--neutral");
-    setData(map, "ops-missions", (missionsGeo.data?.features ?? []).map((f) => {
-      const p = f.properties as Record<string, string>;
-      const isTasked = ["TASKED", "ACTIVE", "PLANNED"].includes(p.status);
-      return { ...f, properties: { ...p, scn: !!p.exercise_run_id, label: `${p.code.replace(/^SIM-/, "")} ${p.priority}`, color: isTasked ? tasked : p.status === "REQUESTED" ? req : open,
-        state: isTasked ? `tasked${p.tasked_base ? ` from ${p.tasked_base}` : ""}` : p.status === "REQUESTED" ? "awaiting approval" : "not tasked" } };
-    }));
-  }, [map, missionsGeo.data]);
-  useEffect(() => {
-    if (!map) return;
-    setData(map, "ops-wx", (wxImpact.data ?? []).map((w) => point(w.lon, w.lat, {
-      color: cssVar(w.runway_closed ? "--critical" : FLIGHT_CAT_TOKEN[w.worst] ?? "--neutral"),
-      label: w.runway_closed ? `${w.code} runway closed` : `${w.code} ${w.worst}${w.at ? ` ${new Date(w.at).toISOString().slice(11, 16)}Z` : ""}`,
-    })));
-  }, [map, wxImpact.data]);
-  useEffect(() => {
-    if (!map) return;
-    if (s.mode !== "OPS") return void setData(map, "ops-sim", []);
-    const iaf = cssVar("--sim"), unk = cssVar("--warning");
-    setData(map, "ops-sim", s.simTracks.map((t) => point(t.lon, t.lat, {
-      track_id: t.track_id, kind: t.kind, rot: t.heading_deg ?? 0,
-      icon: glyphIcon(t.kind === "SIM_IAF" && t.mission_type === "AIRLIFT" ? "airliner" : "fighter", t.kind === "SIM_IAF" ? iaf : unk, 24),
-      label: t.kind === "SIM_IAF" ? `${t.callsign} SIM` : `${t.callsign} UNKNOWN`,
-      desc: t.kind === "SIM_IAF" ? `${t.type ?? ""} ${t.sortie_code ?? ""} · ${t.phase.toLowerCase().replace("_", " ")}` : `${t.phase.toLowerCase()} · ${feetOf(t.alt_m)}`,
-    })));
-  }, [map, s.simTracks, s.mode]);
+    for (const [id, prop, v] of FOCUS_DIM) if (map.getLayer(id)) map.setPaintProperty(id, prop, focusOn ? v * 0.25 : v);
+  }, [map, focusOn]);
+  const pkgFit = useRef("");
+  useEffect(() => {   // frame the base and the destination once per focus request (a new `fit` asks again)
+    if (!map || !pf || !pkgSel) { pkgFit.current = ""; return; }
+    const key = `${pkgSel.run}:${pkgSel.mission}:${pkgSel.fit ?? ""}`;
+    if (pkgFit.current === key) return;
+    pkgFit.current = key;
+    const pts: [number, number][] = [pf.m.target, ...(pf.ps ? [pf.ps.home] : [])];
+    const b = new maplibregl.LngLatBounds(pts[0], pts[0]);
+    for (const p of pts) b.extend(p);
+    const wide = map.getContainer().clientWidth > 1000;
+    // a road rescue a few km out gets a closer frame than a sortie (D82); the frame waits for any camera move already
+    // under way (the map's opening tilt would otherwise cancel it)
+    const fit = () => map.fitBounds(b, { padding: { top: 120, bottom: 110, left: wide ? 360 : 60, right: wide ? 430 : 40 },
+      maxZoom: pf.pkg && isGround(pf.pkg.type) ? 11 : 8, duration: 1300, essential: true });
+    setTimeout(() => (map.isMoving() ? map.once("moveend", fit) : fit()), 60);   // not cancelled: later runs skip on the same key
+  }, [map, pf, pkgSel?.fit]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ---------------------------------------------------------------- what each view shows
   useEffect(() => {
@@ -300,13 +363,16 @@ export function MapView({ hidden }: { hidden: boolean }) {
     for (const [key, ids] of Object.entries(LAYER_IDS)) {
       const k = key as LayerId;
       const only = layerMode(k);
-      for (const id of ids) vis(id, focus ? k === "india-border" || k === "intl-borders" || (k === "satellite" && s.layers.satellite) : s.layers[k] && (!only || only === s.mode));
+      for (const id of ids) vis(id, focus ? k === "india-border" || k === "intl-borders" || (k === "satellite" && s.layers.satellite)
+        : (layerFixed(k) || s.layers[k]) && (!only || only === s.mode));
     }
     vis("live-air", s.mode === "LIVE");
     vis("live-label", s.mode === "LIVE");
     vis("metar", s.mode === "WX" && s.wx.metar);
     vis("metar-label", s.mode === "WX" && s.wx.metar);
     for (const id of FOCUS_LAYERS) vis(id, s.mode === "INFRA" && !focus);
+    for (const id of RING_LAYERS) vis(id, s.mode === "INFRA" && !focus);
+    for (const id of FOCUS_PKG_LAYERS) vis(id, s.mode === "OPS");
     for (const id of CONNECTIVITY_LAYERS) vis(id, !!focus);
     for (const id of ["lbl-country", "lbl-water", "runway", "hillshade"]) vis(id, !focus);
     map.setPaintProperty("relief", "color-relief-opacity", !focus && s.layers.relief ? (s.mode === "WX" ? 0.35 : 0.8) : 0);
@@ -377,8 +443,15 @@ export function MapView({ hidden }: { hidden: boolean }) {
         const position = (selected.geometry as Point).coordinates;
         const recorded = path.trail.data ?? [];
         if (recorded.length) lines.push(feature({ type: "LineString", coordinates: [...recorded.map((p) => [p.lon, p.lat]), position] }, { kind: "trail" }));
-        const destination = scheduledDestination(path.enrich.data?.route);
-        if (destination) lines.push(feature({ type: "LineString", coordinates: greatCircle(position, destination) }, { kind: "schedule" }));
+        // D77: every dotted leg ends at a named airport: origin → first seen (scheduled), observed trail, aircraft → destination
+        const ends = scheduledAirports(path.enrich.data?.route);
+        const start = recorded.length ? [recorded[0].lon, recorded[0].lat] : position;
+        if (ends) lines.push(
+          feature({ type: "LineString", coordinates: greatCircle(ends.origin.at, start) }, { kind: "schedule", leg: "from" }),
+          feature({ type: "LineString", coordinates: greatCircle(position, ends.destination.at) }, { kind: "schedule", leg: "to" }),
+          point(...ends.origin.at, { kind: "airport", role: "from", title: [ends.origin.code, ends.origin.name].filter(Boolean).join(" · "), sub: "departed" }),
+          point(...ends.destination.at, { kind: "airport", role: "to", title: [ends.destination.code, ends.destination.name].filter(Boolean).join(" · "), sub: "arriving" }));
+        if (recorded.length) lines.push(point(start[0], start[1], { kind: "seen", role: "seen", title: `first seen ${istTime(new Date(recorded[0].ts * 1000)).replace(" IST", "")}`, sub: "" }));
       }
       setData(map, "live-path", lines);
     };
@@ -406,7 +479,7 @@ export function MapView({ hidden }: { hidden: boolean }) {
     if (s.wx.clouds)
       add("wx-clouds", `clouds://${location.host}/api/v1/wx/ir?service=WMS&request=GetMap&version=1.3.0&styles=&format=image/png` +
         "&transparent=true&crs=EPSG:3857&width=512&height=512&bbox={bbox-epsg-3857}", 512, 7, "Clouds: NOAA nowCOAST satellite IR");
-    if (s.wx.rain)
+    if (rain)
       add("wx-rain", `${location.origin}/api/v1/wx/owm/precipitation_new/{z}/{x}/{y}.png`, 256, 9, "Rain: © OpenWeatherMap");
     return () => {
       if (current !== map) return;
@@ -415,7 +488,7 @@ export function MapView({ hidden }: { hidden: boolean }) {
         map.removeSource(id);
       }
     };
-  }, [map, s.mode, s.wx.clouds, s.wx.rain]);
+  }, [map, s.mode, s.wx.clouds, rain]);
   useEffect(() => {
     for (const id of ["wx-clouds", "wx-rain"]) if (map?.getLayer(id)) map.setPaintProperty(id, "raster-opacity", s.overlayOpacity);
   }, [map, s.overlayOpacity]);
@@ -554,5 +627,3 @@ export function MapView({ hidden }: { hidden: boolean }) {
 
   return <div ref={el} className="mapcanvas" style={{ visibility: hidden ? "hidden" : "visible" }} aria-label="Map of the region" />;
 }
-
-const feetOf = (m: number) => `${Math.round(m * 3.28084).toLocaleString("en-IN")} ft`;

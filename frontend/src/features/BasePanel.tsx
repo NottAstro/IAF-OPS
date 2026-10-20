@@ -4,7 +4,7 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import type { FleetSnagRisk, User } from "../api/types";
 import { ErrorText, Gauge, Kpi, Loading, Pill, Row, Sim, ToneText } from "../components/ui";
-import { RANK, day, feet, istTime, kl, label, num, sevTone, tone, zulu } from "../lib/format";
+import { COMMS_NAME, RANK, day, feet, istTime, kl, label, num, sevTone, tone, zulu } from "../lib/format";
 import { useStore } from "../store";
 import { DESCRIPTION } from "../equipment/models";
 import { EquipmentDetail, EquipmentTiles, type GalleryGroup, type GalleryType } from "./EquipmentGallery";
@@ -225,7 +225,7 @@ function Tasking({ baseId }: { baseId: number }) {
   const o = q.data.outlook;
   return (
     <>
-      <h3 className="section-h">Tasking today <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>{q.data.items.length ? `${q.data.items.length} packages` : "none committed"} <Sim /></span></h3>
+      {q.data.items.length > 0 && <h3 className="section-h">Tasking today <span className="muted" style={{ fontSize: 12, fontWeight: 400 }}>{q.data.items.length} packages <Sim /></span></h3>}
       {q.data.items.map((t) => (
         <Row key={t.id} onClick={() => nav(`/planner?plan=current&item=${t.id}`)}
           label={<><span className={`s-${t.priority === "P1" ? "critical" : t.priority === "P2" ? "warning" : t.priority === "P3" ? "caution" : "neutral"}`}>{t.priority}</span> <span className="mono">{t.code.replace(/^SIM-/, "")}</span></>}
@@ -264,8 +264,6 @@ function SnagRisk({ baseId }: { baseId: number }) {
   );
 }
 
-const COMMS_NAME: Record<string, string> = { DATALINK_GS: "Data link ground station", VUHF_RELAY: "V/UHF radio relay", HF_STATION: "HF radio station",
-  SATCOM_GS: "Satellite terminal", C2_NODE: "Command & control node", NETWORK_HUB: "Network hub" };
 
 
 const ROLE_DESC: Record<string, string> = {

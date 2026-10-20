@@ -1,5 +1,6 @@
 // After-action report for a scenario run (PHASE2_IMPLEMENTATION_PLAN §10.5). Starting and ending scenarios lives on the
-// Scenarios page (pages/Scenarios.tsx, ARCHITECTURE D55).
+// Scenarios page (pages/Scenarios.tsx, ARCHITECTURE D55). D66: a scripted scenario's report reads its script and this
+// browser's decisions, like the Planner, so the two always agree.
 import { useQuery } from "@tanstack/react-query";
 import { useParams } from "react-router-dom";
 import { api } from "../api/client";
@@ -7,6 +8,8 @@ import { ErrorText, Kpi, Loading, Pill, Row, Sim, ToneText } from "../components
 import { PrioPill, hhmm } from "../features/ops";
 import { istTime, label, num } from "../lib/format";
 import type { Priority } from "../api/types";
+import { type Script, SCRIPTS, baseName, chosen, statusAt, timesOf, validRun } from "../features/scripts";
+import { useStore } from "../store";
 
 interface Inject { offset_min?: number; kind: string; label?: string; params: Record<string, unknown>; applied_at: string | null; result?: string; live?: boolean }
 interface Aar {
@@ -24,6 +27,8 @@ export function AfterAction() {
   if (q.isLoading) return <div className="page"><Loading /></div>;
   if (!q.data) return <div className="page"><ErrorText error={q.error} /></div>;
   const a = q.data, s = a.summary;
+  const script = SCRIPTS.find((x) => x.name === a.run.name);
+  if (script) return <ScriptedAar a={a} script={script} id={id!} />;
   return (
     <div className="page aar">
       <h1 className="page-title">After-action report <Sim /> <span className="muted" style={{ fontSize: 15, fontWeight: 400 }}>{a.run.name}</span>
@@ -65,6 +70,45 @@ export function AfterAction() {
             <td>{label(m.status)}</td><td>{m.outcome === "NONE" ? <span className="dim">—</span> : <ToneText toneName={m.outcome === "MET" ? "ok" : m.outcome === "PARTIAL" ? "caution" : "critical"}>{label(m.outcome)}</ToneText>}</td>
             <td className="num">{num(m.on_station_achieved_min, 0)} / {m.on_station_min} min</td></tr>
         ))}</tbody></table></div>
+    </div>
+  );
+}
+
+const VERB = (d: unknown, hasPkg: boolean) => typeof d === "number" ? "Your choice" : d === "accept" || !hasPkg ? "Not flown" : "Kept";
+const TONE: Record<string, string> = { landed: "ok", airborne: "info", "on station": "info", returning: "info", approved: "ok", waiting: "warning", "not flown": "critical" };
+
+/** D66: the report for a scripted scenario: what happened, what was decided and how each mission went. Values only. */
+function ScriptedAar({ a, script, id }: { a: Aar; script: Script; id: string }) {
+  const rec = useStore((st) => st.demo[id]);
+  const now = useStore((st) => st.simClock?.sim_now) ?? new Date().toISOString();
+  const run = validRun(rec, a.run.started_sim);
+  const at = run?.approvedAt ?? null;
+  const rows = script.missions.map((m) => { const p = chosen(m, run?.dec[m.id]); return { m, p, d: run?.dec[m.id], st: statusAt(p, at, now) }; });
+  const count = (f: (x: (typeof rows)[number]) => boolean) => rows.filter(f).length;
+  const decideMin = at ? Math.round((Date.parse(at) - Date.parse(a.run.started_sim)) / 60e3) : null;
+  const t0 = Date.parse(a.run.started_sim);
+  return (
+    <div className="page aar">
+      <h1 className="page-title">After-action report <Sim /> <span className="muted" style={{ fontSize: 15, fontWeight: 400 }}>{script.name}</span>
+        <span className="topbar-spacer" /><button className="btn btn-sm no-print" onClick={() => print()}>Print</button></h1>
+      <div className="muted" style={{ marginBottom: 12 }}>{istTime(a.run.started_sim, true)} – {a.run.ended_sim ? istTime(a.run.ended_sim, true) : "running"} (simulated time). All data simulated.</div>
+      <div className="kpis" style={{ gridTemplateColumns: "repeat(5, 1fr)", marginBottom: 16 }}>
+        <Kpi label="Missions affected" value={script.missions.length} sub={`${count((x) => x.m.kind === "added")} new · ${count((x) => x.m.kind === "moved")} moved`} />
+        <Kpi label="Decision" value={at ? `${decideMin} min` : "—"} sub={at ? `event → approval at ${hhmm(at)}` : "not approved yet"} toneName={at ? undefined : "warning"} />
+        <Kpi label="Recommendations kept" value={count((x) => x.d === undefined || x.d === "keep")} sub={`${count((x) => typeof x.d === "number")} changed by you`} />
+        <Kpi label="Flown" value={count((x) => x.st === "landed")} sub={`${count((x) => ["airborne", "on station", "returning"].includes(x.st))} in the air now`} />
+        <Kpi label="Not flown" value={count((x) => x.st === "not flown")} toneName={count((x) => x.st === "not flown") ? "warning" : undefined} />
+      </div>
+      <h2 className="section-h">What happened</h2>
+      {script.happened.map((h, k) => <Row key={k} label={h.what} value={<span className="mono dim">{h.ends != null ? `until ${istTime(new Date(t0 + h.ends * 60e3).toISOString(), true)}` : `from ${hhmm(a.run.started_sim)}`}</span>} />)}
+      <h2 className="section-h">Missions</h2>
+      <div className="table-wrap"><table className="table">
+        <thead><tr><th>Pri.</th><th>Mission</th><th>Decision</th><th>Package</th><th>Launch – back</th><th>Status</th></tr></thead>
+        <tbody>{rows.map(({ m, p, d, st }) => { const t = p ? timesOf(p, at, now) : null; return (
+          <tr key={m.id}><td><PrioPill p={m.priority} /></td><td>{m.name} <span className="dim" style={{ fontSize: 11 }}>{m.kind}</span></td>
+            <td>{at ? VERB(d, !!p) : <span className="dim">—</span>}</td><td>{p ? `${p.n} × ${p.type} from ${baseName(p.base)}` : <span className="dim">—</span>}</td>
+            <td className="mono">{t && at ? `${hhmm(new Date(t.launch).toISOString())} – ${hhmm(new Date(t.back).toISOString())}` : <span className="dim">—</span>}</td>
+            <td><ToneText toneName={TONE[st] ?? "neutral"}>{label(st)}</ToneText></td></tr>); })}</tbody></table></div>
     </div>
   );
 }

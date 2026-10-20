@@ -12,7 +12,7 @@ import { istTime, label, zulu } from "../lib/format";
 import { useStore } from "../store";
 import { MapView } from "../map/MapView";
 import { Admin } from "../pages/Admin";
-import { Alerts, Audit } from "../pages/Alerts";
+import { Audit } from "../pages/Audit";
 import { Ato } from "../pages/Ato";
 import { AfterAction } from "../pages/Exercise";
 import { Scenarios } from "../pages/Scenarios";
@@ -68,7 +68,7 @@ function Authed({ user }: { user: User }) {
             <Route path="/inventory/:entity/:typeId?" element={<Inventory user={user} />} />
             <Route path="/pilots" element={<Pilots user={user} />} />
             <Route path="/pilots/:id" element={<PilotProfile user={user} />} />
-            <Route path="/alerts" element={<Alerts />} />
+            <Route path="/alerts" element={<Navigate to="/overview" replace />} />
             <Route path="/audit" element={user.role === "VIEWER" ? <Navigate to="/map" /> : <Audit user={user} />} />
             <Route path="/admin" element={user.role === "ADMIN" ? <Admin /> : <Navigate to="/map" />} />
             <Route path="*" element={<Navigate to="/map" />} />
@@ -96,9 +96,6 @@ function TopBar({ user }: { user: User }) {
     const t = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(t);
   }, []);
-  const alerts = useQuery({ queryKey: ["alerts", "counts"], queryFn: () => api<{ open_counts: Record<string, number> }>("/alerts?limit=1"), refetchInterval: 20000 });
-  const crit = alerts.data?.open_counts.CRITICAL ?? 0;
-  const warn = alerts.data?.open_counts.WARNING ?? 0;
   const logout = async () => {
     await api("/auth/logout", { method: "POST" });
     qc.setQueryData(["me"], null);
@@ -111,9 +108,6 @@ function TopBar({ user }: { user: User }) {
       <nav className="nav" aria-label="Main">
         {link("/map", "Map")}{link("/overview", "Overview")}{link("/missions", "Missions")}{link("/planner", "Planner")}{user.role !== "VIEWER" && link("/scenarios", "Scenarios")}
         {link("/inventory", "Inventory")}
-        <NavLink to="/alerts" className={({ isActive }) => `nav-link${isActive ? " active" : ""}`}>
-          Alerts{crit + warn > 0 && <span className="badge-count" style={{ background: crit ? "var(--critical)" : "var(--warning)" }} aria-label={`${crit} critical, ${warn} warning`}>{crit ? `■ ${crit}` : `◆ ${warn}`}</span>}
-        </NavLink>
         {user.role !== "VIEWER" && link("/audit", "Audit")}
         {user.role === "ADMIN" && link("/admin", "Admin")}
       </nav>

@@ -39,6 +39,8 @@ export function Missions({ user }: { user: User }) {
     onError: (e) => toast(e instanceof ApiError ? e.message : "Failed", "CRITICAL"),
   });
   const rows = q.data?.items ?? [];
+  // columns that are empty for every row (nothing tasked or flown yet) stay hidden, so the table reads at a glance
+  const showTasked = rows.some((m) => m.tasked_base), showOutcome = rows.some((m) => m.outcome !== "NONE");
   return (
     <div className="page">
       <h1 className="page-title">Missions <Sim title="Simulated tasking" />
@@ -69,7 +71,8 @@ export function Missions({ user }: { user: User }) {
       {q.error && <ErrorText error={q.error} />}
       <div className="table-wrap">
         <table className="table">
-          <thead><tr><th>Tag</th><th>Pri.</th><th>Mission</th><th>Type</th><th>Window (IST)</th><th>Cmd</th><th className="right">Needs</th><th>Status</th><th>Tasked</th><th>Outcome</th><th /></tr></thead>
+          <thead><tr><th>Tag</th><th>Pri.</th><th>Mission</th><th>Type</th><th>Window (IST)</th><th>Cmd</th><th className="right">Needs</th><th>Status</th>
+            {showTasked && <th>Tasked</th>}{showOutcome && <th>Outcome</th>}<th /></tr></thead>
           <tbody>{rows.map((m) => (
             <tr key={m.id} className={focus === m.id ? "sel" : ""}>
               <td><span className={`tag${m.exercise_run_id ? " scn" : ""}`}>{m.tag}</span></td>
@@ -83,10 +86,10 @@ export function Missions({ user }: { user: User }) {
               <td>{m.command ?? "—"}</td>
               <td className="num">{m.required_aircraft} × {m.on_station_min} min</td>
               <td><Pill status={STATUS_TONE[m.status] ?? m.status} text={label(m.status)} /></td>
-              <td>{m.tasked_base ? <span>{m.tasked_n} × {m.tasked_type} <span className="mono">{m.tasked_base}</span> {hhmm(m.tasked_launch)}{m.sortie_status && <span className="dim"> · {label(m.sortie_status)}</span>}</span>
-                : <span className="dim">—</span>}</td>
-              <td>{m.outcome !== "NONE" ? <ToneText toneName={OUTCOME_TONE[m.outcome] ?? "neutral"}>{label(m.outcome)}</ToneText> : <span className="dim">—</span>}</td>
-              <td className="nowrap">
+              {showTasked && <td>{m.tasked_base ? <span>{m.tasked_n} × {m.tasked_type} <span className="mono">{m.tasked_base}</span> {hhmm(m.tasked_launch)}{m.sortie_status && <span className="dim"> · {label(m.sortie_status)}</span>}</span>
+                : <span className="dim">—</span>}</td>}
+              {showOutcome && <td>{m.outcome !== "NONE" ? <ToneText toneName={OUTCOME_TONE[m.outcome] ?? "neutral"}>{label(m.outcome)}</ToneText> : <span className="dim">—</span>}</td>}
+              <td className="nowrap row-act">
                 {canPlan && m.status === "REQUESTED" && <button className="btn btn-sm" onClick={() => act.mutate({ id: m.id, action: "approve" })}>Approve</button>}{" "}
                 {canPlan && ["REQUESTED", "APPROVED", "PLANNED", "TASKED"].includes(m.status) &&
                   <button className="btn btn-sm btn-danger" onClick={() => confirm(`Cancel ${m.code}? Any planned sortie is cancelled too.`) && act.mutate({ id: m.id, action: "cancel" })}>Cancel</button>}

@@ -173,6 +173,14 @@ def _hm(ts) -> str:
     return (t.astimezone(IST) if t.tzinfo else t + timedelta(hours=5, minutes=30)).strftime("%H:%M")
 
 
+def _hm_day(ts, now: datetime) -> str:
+    """As _hm, with the day when it isn't the simulated today ("tomorrow 01:09", "22 Oct 01:09")."""
+    t, n = _ts(ts).astimezone(IST), now.astimezone(IST)
+    if t.date() == n.date():
+        return t.strftime("%H:%M")
+    return f"tomorrow {t:%H:%M}" if t.date() == n.date() + timedelta(days=1) else f"{t:%d %b %H:%M}"
+
+
 def _what(d: dict | None, m: dict, it: dict | None, src, dbase: str = "") -> tuple[str, str]:
     """What it broke, in words: from the disruption kind, else from the change."""
     name, base = m["name"], _short((it or {}).get("base", {}).get("name") if it else "")
@@ -206,14 +214,15 @@ def _named(t: str, cn: dict) -> str:
 
 def _effect_row(e: dict, now: datetime) -> dict:
     k, until = e["kind"], e.get("until")
-    u = f" until {_hm(until)}" if until else ""
+    u = f" until {_hm_day(until, now)}" if until else ""
+    radars = f"{e.get('count')} radar{'' if e.get('count') == 1 else 's'}"
     what, rec = {
         "AIRCRAFT_LOST": (f"{e.get('count', 1)} {e.get('type')} lost at {e.get('base_name')}", "Written off; out of every plan"),
         "AIRCRAFT_GROUNDING": (f"{e.get('count')} {e.get('type')} grounded", f"Out of the plan{u}"),
         "RUNWAY_CLOSED": (f"{e.get('base_name')} runway closed", f"Reopens{u.replace(' until', '')}"),
         "WX_FRONT": (f"{', '.join(e.get('bases', []))} below flying minima", f"Front clears{u.replace(' until', '')}"),
         "FUEL_DELAY": (f"{', '.join(e.get('bases', []))} fuel down {e.get('loss_pct', 0):.0f}%", f"Resupply{u.replace(' until', '')}"),
-        "RADAR_DOWN": (f"{e.get('count')} radar(s) offline at {e.get('base_name')}", f"Back{u.replace(' until', '')}"),
+        "RADAR_DOWN": (f"{radars} offline at {e.get('base_name')}", f"Back{u.replace(' until', '')}"),
         "THREAT_ZONE": (f"Threat zone, risk {e.get('risk', 0):.1f}", f"Routes avoid it{u}"),
     }.get(k, (None, None))
     return {"sev": "n", "what": what, "sub": e.get("left") is not None and f"{e['left']} left there" or "", "rec": rec,
@@ -430,7 +439,7 @@ def live(db: Session) -> list[dict]:
         sc = db.get(M.Scenario, r.scenario_id) if r.scenario_id else None
         need = db.execute(text("SELECT count(*) FROM disruption WHERE exercise_run_id = :r AND proposal_plan_id = :p"),
                           {"r": r.id, "p": pending.id if pending else 0}).scalar()
-        out.append({"id": r.id, "name": r.name, "code": sc.code if sc else None, "intensity": r.intensity,
+        out.append({"id": r.id, "name": r.name, "code": sc.code if sc else None, "intensity": r.intensity, "started_sim": r.started_sim,
                     "elapsed_min": round((now - r.started_sim).total_seconds() / 60), "need": need})
     return out
 
@@ -590,7 +599,7 @@ EFFECT_WORD = {"RUNWAY_CLOSED": "runway closed", "RADAR_DOWN": "radars offline",
 
 def effects_geo(db: Session) -> dict:
     """Ops map (D56): one point per base a live scenario's effects hit, labelled with what happened there."""
-    pts = {r.code: (r.lon, r.lat) for r in db.execute(text("SELECT code, ST_X(geom) lon, ST_Y(geom) lat FROM base WHERE side = 'OWN'"))}
+    pts = {r.code: (r.lon, r.lat, r.id) for r in db.execute(text("SELECT id, code, ST_X(geom) lon, ST_Y(geom) lat FROM base WHERE side = 'OWN'"))}
     at: dict[str, dict] = {}
     for run in EX.running(db):
         for e in (run.footprint or {}).get("effects", []):
@@ -603,5 +612,6 @@ def effects_geo(db: Session) -> dict:
                     if f"{word}{until}" not in x["what"]:
                         x["what"].append(f"{word}{until}")
     return {"type": "FeatureCollection", "features": [
-        {"type": "Feature", "geometry": {"type": "Point", "coordinates": list(pts[c])},
-         "properties": {"code": c, "scenario": x["scenario"], "label": f"{c}: {', '.join(x['what'])}"}} for c, x in at.items()]}
+        {"type": "Feature", "geometry": {"type": "Point", "coordinates": list(pts[c][:2])},
+         "properties": {"code": c, "base_id": pts[c][2], "scenario": x["scenario"], "label": f"{c}: {', '.join(x['what'])}"}}
+        for c, x in at.items()]}

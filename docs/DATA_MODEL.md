@@ -725,6 +725,7 @@ Each tick is **one transaction**. On a version conflict with a human edit, the c
    - shift change at 06:00 / 14:00 / 22:00 IST
    - fuel replenishment arrivals
    - at sim midnight, generate the next day's flying programme (§8.13)
+   - at sim midnight, copy the latest tasking day's routine mission requests one day forward, so tomorrow's tasking always exists (D64; scenario pop-ups, split parts and people's own missions are not copied)
 3. **Sorties**, both simulator-generated and human-created:
    - Status progression: PLANNED → CREWED (T−60 min) → READY (T−15) → AIRBORNE (launch) → ON_STATION → RTB → LANDED → COMPLETED (after debrief, 30 min).
    - **CANCELLED** before launch if the aircraft is unserviceable, no crew is available, fuel is short, or the METAR is below minima. A human cancel uses `USER_CANCELLED`.

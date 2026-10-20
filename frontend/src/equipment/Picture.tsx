@@ -1,6 +1,6 @@
 import { type ReactElement, useEffect, useState } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { AIRCRAFT, type AircraftSpec, AircraftArt, aircraftBox } from "./aircraft";
+import { AIRCRAFT, type AircraftSpec, AircraftArt, aircraftBox, familyOf } from "./aircraft";
 import { equipmentSvg } from "./models";
 
 export type ArtRef = { kind: "aircraft"; type: string; category?: string } | { kind: "ground"; type: string };
@@ -12,19 +12,39 @@ function AircraftTop({ spec, label }: { spec: AircraftSpec; label: string }) {
   const m = Math.max(w, h) * 0.06;
   return (
     <svg viewBox={`${-w / 2 - m} ${-0.6 - m} ${w + 2 * m} ${h + 2 * m + 0.6}`} preserveAspectRatio="xMidYMid meet" role="img" aria-label={`Top view of ${label}`}>
-      <defs>
-        <linearGradient id="bp-glass" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="#7fb0dc" /><stop offset="0.45" stopColor="#2f6297" /><stop offset="1" stopColor="#163d66" />
-        </linearGradient>
-      </defs>
+      <SkinDefs f={familyOf(spec)} />
       <AircraftArt spec={spec} />
     </svg>
   );
 }
 
+/** D68: the paint. Bodies shade like a cylinder (light along the spine), wings from leading to trailing edge, glazing is
+ * dark tinted glass, the radome a lighter cone, nozzles dark metal. Colours are tokens per paint family. */
+function SkinDefs({ f }: { f: string }) {
+  const c = (k: string) => `var(--ac-${f}-${k})`;
+  return (
+    <defs>
+      <linearGradient id="ac-body" x1="0" y1="0" x2="1" y2="0">
+        <stop offset="0" stopColor={c("lo")} /><stop offset="0.22" stopColor={c("mid")} /><stop offset="0.5" stopColor={c("hi")} />
+        <stop offset="0.78" stopColor={c("mid")} /><stop offset="1" stopColor={c("lo")} />
+      </linearGradient>
+      <linearGradient id="ac-wing" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stopColor={c("hi")} /><stop offset="0.25" stopColor={c("mid")} /><stop offset="0.85" stopColor={c("mid")} /><stop offset="1" stopColor={c("lo")} />
+      </linearGradient>
+      <linearGradient id="ac-glass" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stopColor="var(--ac-glass-hi)" /><stop offset="0.5" stopColor="var(--ac-glass-lo)" /><stop offset="1" stopColor="var(--ac-glass-hi)" />
+      </linearGradient>
+      <linearGradient id="ac-radome" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stopColor="var(--ac-radome)" /><stop offset="1" stopColor={c("hi")} />
+      </linearGradient>
+      <radialGradient id="ac-nozzle"><stop offset="0" stopColor="var(--ac-dark)" /><stop offset="1" stopColor="var(--ac-dark-hi)" /></radialGradient>
+    </defs>
+  );
+}
+
 // Each drawing is rasterised once per type into a PNG (with the aircraft drop shadow baked in). Inline SVG, and even
 // SVG <img>, was re-rasterised on every scroll frame, which made the Inventory tables and type cards stutter.
-const SIZE = 360;  // px on the long side: sharp up to the largest use (type card / header, about 2× on hi-dpi)
+const SIZE = 480;  // px on the long side: sharp up to the largest use (type card / header, about 2× on hi-dpi), with the D68 detail
 const done = new Map<string, string>();
 const pending = new Map<string, Promise<string>>();
 

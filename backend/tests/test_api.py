@@ -121,6 +121,29 @@ def test_synthetic_sites_stay_inside_buffer():
             assert G.inner.contains(wkb.loads(bytes(g)))
 
 
+def test_fuel_and_store_labels_name_their_base():
+    """D81: a fuel tank or store is labelled with its base ("VABJ · ATF"), so fuel activity and stock levels say where."""
+    c = login("viewer")
+    for entity, col in (("fuel-transactions", "fuel_storage_id"), ("stock-levels", "warehouse_id")):
+        page = c.get(f"/api/v1/inv/{entity}?page_size=5").json()
+        labels = page["labels"][col]
+        assert labels and all(" · " in v and v.split(" · ")[0] for v in labels.values()), entity
+
+
+def test_coverage_union_contains_every_working_site():
+    """D63: "Show all coverage" is one merged outline over the sites still working, and every site row is SIM-flagged."""
+    from shapely.geometry import Point, shape
+    c = login("viewer")
+    for kind, path in (("radar", "radars"), ("ad", "ad")):
+        sites = c.get(f"/api/v1/sites/{path}").json()
+        assert sites and all(x["simulated"] is True for x in sites)
+        working = [x for x in sites if x["status"] in ("OPERATIONAL", "DEGRADED")]
+        fc = c.get(f"/api/v1/sites/coverage?kind={kind}").json()
+        assert len(fc["features"]) == 1 and fc["features"][0]["properties"]["sites"] == len(working)
+        area = shape(fc["features"][0]["geometry"])
+        assert all(area.contains(Point(x["lon"], x["lat"])) for x in working), kind
+
+
 def test_human_sortie_goes_through_the_shared_service():
     """FR-INV-10: a base commander's sortie is created by services/sorties.py (one set of rules with plan commit):
     one audit row, its tail on board, launch not in the past."""

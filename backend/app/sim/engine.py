@@ -23,6 +23,7 @@ from ..geo import India, bearing, dist_km, load_india, offset
 from ..live import feeds
 from ..weather import metar
 from . import alerts as alert_rules
+from . import missions as routine_missions
 from . import reliability as REL
 from .routes import plan, position
 
@@ -176,6 +177,10 @@ class Simulator:
             return
         st.last_programme_date = day
         db, rng = ctx.db, random.Random(f"{st.seed}:programme:{day.isoformat()}")
+        added = routine_missions.roll_forward(db, ctx.now)    # D64: tomorrow's routine tasking is always there
+        if added:
+            log.info("routine tasking: %d mission requests copied forward", added)
+            ctx.changed.add("mission")
         own = {b.id: b for b in db.scalars(select(M.AirBase).where(M.AirBase.side == "OWN"))}
         missions = list(db.scalars(select(M.Mission).where(M.Mission.status == "ACTIVE")))
         busy_until: dict[int, datetime] = {}

@@ -10,7 +10,7 @@ monitor can tell which disruptions belong to which scenario (`owner()`).
 """
 import copy
 import re
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from shapely.geometry import MultiPolygon, Polygon
 from sqlalchemy import select, text
@@ -46,6 +46,11 @@ def current(db: Session) -> M.ExerciseRun | None:
     """The newest live run (the single-run callers: exercise state, legacy live injects)."""
     r = running(db)
     return r[0] if r else None
+
+
+def _z(t: datetime) -> str:
+    """Zulu time for inject messages. The sim clock comes back IST-aware, so convert before formatting (D64 fix)."""
+    return t.astimezone(timezone.utc).strftime("%d %b %H:%MZ")
 
 
 def sim_now(db: Session) -> datetime:
@@ -207,7 +212,7 @@ def inject(db: Session, user: dict | None, kind: str, params: dict, label: str |
             db.add(M.AirspaceZone(code=f"RWY-{b.code}", name=f"{b.code} runway closed (exercise)", kind="TEMP_RESERVATION",
                                   geom=from_shape(poly, srid=4326), lower_m=0, upper_m=3000, capacity_packages=0,
                                   base_id=b.id, active_from=now, active_to=until))
-        msg = f"{b.code} runways closed until {until:%H:%M}Z"
+        msg = f"{b.code} runways closed until {_z(until)}"
         _fp(owner_run, {"kind": kind, "base": b.code, "base_name": _short(b), "until": until.isoformat()}, bases=[b.id])
     elif kind == "WX_FRONT":
         cat = params.get("cat", "IFR")
@@ -225,7 +230,7 @@ def inject(db: Session, user: dict | None, kind: str, params: dict, label: str |
                                    SET ceiling_ft = :c, vis_m = :v, flight_cat = :cat"""),
                            {"b": b.id, "t": t, "c": ceil, "v": vis, "cat": cat})
                 t += timedelta(hours=1)
-        msg = f"{cat} over {', '.join(codes)} until {until:%H:%M}Z"
+        msg = f"{cat} over {', '.join(codes)} until {_z(until)}"
         _fp(owner_run, {"kind": kind, "bases": codes, "cat": cat, "until": until.isoformat()}, bases=ids)
     elif kind == "THREAT_ZONE":
         from geoalchemy2.shape import from_shape
@@ -236,7 +241,7 @@ def inject(db: Session, user: dict | None, kind: str, params: dict, label: str |
         db.add(M.ThreatZone(code=code, name=params.get("name", "Unknown air activity (exercise)"),
                             kind=params.get("zone_kind", "UNKNOWN_ACTIVITY"), geom=from_shape(MultiPolygon([poly]), srid=4326),
                             risk_level=float(params.get("risk", 0.9)), active_from=now, active_to=until, is_simulated=True))
-        msg = f"Threat activity zone ({r:.0f} km, risk {float(params.get('risk', 0.9)):.1f}) until {until:%H:%M}Z"
+        msg = f"Threat activity zone ({r:.0f} km, risk {float(params.get('risk', 0.9)):.1f}) until {_z(until)}"
         _fp(owner_run, {"kind": kind, "radius_km": r, "risk": float(params.get("risk", 0.9)), "until": until.isoformat()},
             zones=[code])
     elif kind == "AIRCRAFT_GROUNDING":
@@ -291,7 +296,7 @@ def inject(db: Session, user: dict | None, kind: str, params: dict, label: str |
         b = _base(db, params["base"])
         ids = [r[0] for r in db.execute(text("""UPDATE radar_site SET status = 'OFFLINE', repair_eta = :u, version = version + 1
                                                 WHERE base_id = :b RETURNING id"""), {"b": b.id, "u": until})]
-        msg = f"{len(ids)} radar(s) at {b.code} offline until {until:%H:%M}Z"
+        msg = f"{len(ids)} radar{'' if len(ids) == 1 else 's'} at {b.code} offline until {_z(until)}"
         _fp(owner_run, {"kind": kind, "base": b.code, "base_name": _short(b), "count": len(ids), "until": until.isoformat()},
             radars=ids, bases=[b.id])
     elif kind == "AIRCRAFT_LOST":

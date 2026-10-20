@@ -1,41 +1,229 @@
-.inventory-groups {
+/* D80: category cards (icon, name, two headline counts) and a pill switcher for the records inside a category */
+/* D81: two rows. Row 1 the categories (one line of count each, so every card is the same height); row 2 the category's
+   records, search, filters and actions */
+.inv-cats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: var(--s2);
+  margin-bottom: var(--s2);
+}
+
+.inv-cat {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 12px;
+  row-gap: 3px;
+  align-items: center;
+  padding: 9px 12px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--surface-1);
+  color: var(--text-1);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 120ms ease-out, border-color 120ms ease-out, box-shadow 120ms ease-out;
+}
+
+.inv-cat:hover {
+  background: var(--surface-2);
+  border-color: var(--line);
+}
+
+.inv-cat.on {
+  background: var(--accent-tint);
+  border-color: var(--accent);
+  box-shadow: var(--glow);
+}
+
+.inv-cat:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.inv-cat-ic {
+  grid-row: 1 / 3;
+  display: grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid var(--rule);
+  border-radius: 9px;
+  background: var(--surface-2);
+  color: var(--text-2);
+}
+
+.inv-cat-ic svg {
+  width: 19px;
+  height: 19px;
+}
+
+.inv-cat.on .inv-cat-ic {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-ink);
+}
+
+.inv-cat-name {
+  overflow: hidden;
+  font-size: 13.5px;
+  font-weight: 700;
+  line-height: 17px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.inv-cat.on .inv-cat-name {
+  color: var(--accent-strong);
+}
+
+.inv-cat-count {
+  overflow: hidden;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.inv-cat-count b {
+  font-family: var(--font-data);
+  font-weight: 700;
+  color: var(--text-2);
+}
+
+.inv-cat.on .inv-cat-count b {
+  color: var(--text-1);
+}
+
+.inv-cat.on .inv-cat-count {
+  color: var(--text-2);
+}
+
+.inv-bar {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--s1);
-  padding: var(--s1);
-  margin-bottom: var(--s2);
+  align-items: center;
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+}
+
+.inv-bar .select {
+  max-width: 230px;
+}
+
+.inv-search {
+  width: 210px;
+}
+
+.inv-ro {
+  padding: 2px 8px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  font-size: var(--t-micro);
+  color: var(--text-3);
+}
+
+.inv-subs {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  margin-right: var(--s2);
+  padding: 3px;
   border: 1px solid var(--rule);
   border-radius: 8px;
   background: var(--surface-1);
 }
 
-.inventory-group {
-  flex: 1 1 auto;
-  padding: var(--s2) var(--s3);
-  border: 1px solid transparent;
-  border-radius: 5px;
-  background: transparent;
+.inv-sub {
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 6px;
+  background: none;
   color: var(--text-2);
   font: inherit;
+  font-size: 13px;
   cursor: pointer;
 }
 
-.inventory-group:hover {
+.inv-sub:hover {
   background: var(--surface-2);
   color: var(--text-1);
 }
 
-.inventory-group.on {
-  border-color: var(--accent);
-  background: var(--accent-tint);
-  color: var(--accent-strong);
+.inv-sub.on {
+  background: var(--surface-3);
+  color: var(--text-1);
+  box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-.inventory-group:focus-visible {
+.inv-sub:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: 2px;
+  outline-offset: 1px;
 }
 
-.inventory-sections {
-  margin-bottom: var(--s4);
+/* D81: fuel at a glance, one card per grade */
+.fuel-sum {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: var(--s2);
+  margin-bottom: var(--s3);
+}
+
+.fuel-card {
+  display: grid;
+  gap: 6px;
+  padding: 10px 14px;
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  background: var(--surface-1);
+}
+
+.fuel-card-top {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 14px;
+}
+
+.fuel-card-top .mono {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.fuel-bar {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--surface-3);
+}
+
+.fuel-bar i {
+  display: block;
+  height: 100%;
+}
+
+.fuel-card-sub {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  font-size: var(--t-micro);
+  color: var(--text-2);
+}
+
+/* a level column: gauge (reserve and reorder ticks), on hand / maximum, percent */
+.lvl {
+  display: inline-grid;
+  grid-template-columns: 130px minmax(96px, auto) 38px;
+  align-items: center;
+  gap: 10px;
+  white-space: nowrap;
+}
+
+.lvl .gauge {
+  margin: 0;
+}
+
+.lvl .dim {
+  text-align: right;
 }

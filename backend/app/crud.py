@@ -73,6 +73,8 @@ LABEL_COL = {"base": "code", "squadron": "number", "aircraft_type": "name", "air
              "aircrew": "service_no", "command": "code", "fuel_storage": "grade", "warehouse": "name",
              "stock_item": "nomenclature", "ad_system_type": "name", "radar_type": "name", "mission": "code",
              "sortie": "code", "comms_node": "code"}
+# Labels for these tables carry their base's code, so other records can say where they are (D81).
+BASE_PREFIXED = {"fuel_storage", "warehouse"}
 
 
 def ent(name: str) -> Entity:
@@ -269,6 +271,12 @@ def labels_for(db: Session, e: Entity, rows: list[dict]) -> dict:
         lc = LABEL_COL.get(table.name)
         ids = {r[c.name] for r in rows if r.get(c.name) is not None}
         if not lc or not ids:
+            continue
+        if table.name in BASE_PREFIXED:   # "VABJ · ATF": a tank or store means little without its base (D81)
+            base = table.metadata.tables["base"]
+            res = db.execute(select(table.c.id, base.c.code, table.c[lc]).join(base, base.c.id == table.c.base_id)
+                             .where(table.c.id.in_(ids)))
+            out[c.name] = {str(i): f"{code} · {lab}" for i, code, lab in res}
             continue
         res = db.execute(select(table.c.id, table.c[lc]).where(table.c.id.in_(ids)))
         out[c.name] = {str(i): lab for i, lab in res}

@@ -1,11 +1,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { type ReactNode, useState } from "react";
+import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import type { LiveScenario } from "../api/types";
-import { zulu } from "../lib/format";
+import { FLYING, GLYPH, ROUTINE, type Script, type Status, isGround, routineStart, scriptFor, situationState, statusWord, validRun } from "./scripts";
+import { INT_COLOUR } from "./scenarioview";
+import { istTime, zulu } from "../lib/format";
 import { OptionPanel } from "../components/OptionPanel";
 import { SettingsWindow } from "../components/SettingsWindow";
-import { LAYERS, LAYER_GROUPS, LIVE_CATS, LIVE_GROUP, type LayerId, type LiveCat, MODES, type Mode, type WxLayer, WX_LAYERS, layerMode, useStore } from "../store";
+import { LAYERS, LAYER_GROUPS, LIVE_CATS, LIVE_GROUP, type LayerId, type LiveCat, MODES, type Mode, type WxLayer, WX_LAYERS, layerMode, layerSim, useStore } from "../store";
 
 const CAT: Record<LiveCat, { label: string; color: string; note: string }> = {
   civil: { label: "Civil aircraft", color: "var(--caution)", note: "Airliners, cargo, business jets and civil helicopters" },
@@ -35,9 +38,9 @@ const VIEW: Record<Mode, { tab: string; hint: string; icon: ReactNode }> = {
     icon: <path fill="currentColor" stroke="none" d="M12 2.5l1.5 6.3 7.5 4.4v1.9l-7.5-2.3-.4 5.5 2.7 2v1.4L12 20.7l-3.8 1v-1.4l2.7-2-.4-5.5L3 15.1v-1.9l7.5-4.4z" /> },
   WX: { tab: "Weather", hint: "Satellite clouds, rain and wind on a flat map. Click anywhere for a point forecast.",
     icon: <path d="M7 18.5h10.6a4.1 4.1 0 0 0 .6-8.15A6.1 6.1 0 0 0 6.5 9.6 4.5 4.5 0 0 0 7 18.5z" /> },
-  INFRA: { tab: "Infra", hint: "Roads, rail and airports. Select an air base to see its nearest railheads, airports and IAF bases.",
+  INFRA: { tab: "Infra", hint: "Roads, rail, airports and simulated defence sites. Select an air base to see its nearest railheads, airports and IAF bases.",
     icon: <><path d="M8 21 11 3M16 21 13 3" /><path d="M12 6.5v2M12 11.5v2.5M12 17v3" /></> },
-  OPS: { tab: "Ops", hint: "The simulated operational picture: planned sorties flying their routes, mission areas, generic threat zones and weather impact. Nothing here is real data.",
+  OPS: { tab: "Ops", hint: "The simulated operational picture. Click a mission to follow it on the map.",
     icon: <><circle cx="12" cy="12" r="7.5" /><circle cx="12" cy="12" r="2.2" /><path d="M12 2.5v4M12 17.5v4M2.5 12h4M17.5 12h4" /></> },
 };
 const SWATCH: Record<LayerId, ReactNode> = {
@@ -58,41 +61,89 @@ const SWATCH: Record<LayerId, ReactNode> = {
   states: <span className="swatch-line" style={{ borderColor: "var(--map-admin1)", borderTopWidth: 1 }} />,
   districts: <span className="swatch-line" style={{ borderColor: "var(--map-admin2)", borderTopStyle: "dashed", borderTopWidth: 1 }} />,
   places: <span className="toggle-count" style={{ color: "var(--map-label)" }}>Aa</span>,
-  "ops-sim": <span className="swatch-dot" style={{ background: "var(--sim)" }} />,
-  "ops-unknown": <span className="swatch-dot" style={{ background: "var(--warning)" }} />,
-  "ops-routes": <span className="swatch-line" style={{ borderColor: "var(--sim)" }} />,
   "ops-missions": <span className="swatch-dot" style={{ background: "var(--ok)", boxShadow: "0 0 0 2px var(--bg), 0 0 0 3px var(--caution)" }} />,
   "ops-threat": <span className="swatch" style={{ background: "rgb(248 113 113 / .18)", border: "1px dashed var(--base-hostile)" }} />,
-  "ops-airspace": <span className="swatch" style={{ border: "1px dashed var(--line)" }} />,
-  "ops-radar": <span className="swatch" style={{ borderRadius: "50%", border: "1px dotted var(--info)" }} />,
-  "ops-ad": <span className="swatch" style={{ borderRadius: "50%", border: "1px dashed var(--accent)", background: "var(--accent-tint)" }} />,
-  "ops-ad-sites": <span className="swatch" style={{ color: "var(--sim)", border: "1px solid var(--sim)", borderRadius: "0 0 50% 50%", textAlign: "center" }}>⌃</span>,
-  "ops-wx": <span className="swatch" style={{ borderRadius: "50%", border: "2px solid var(--warning)" }} />,
-  "ops-scenarios": <span className="swatch" style={{ borderRadius: "50%", border: "2px solid var(--warning)", background: "transparent" }} />,
-  "ops-transfers": <span className="swatch-line" style={{ borderColor: "var(--ok)", borderTopStyle: "dashed" }} />,
+  "ops-radar-sites": <svg className="swatch" viewBox="0 0 24 24" fill="var(--bg)" stroke="var(--sim)" strokeWidth="1.8" aria-hidden><circle cx="12" cy="12" r="10" /><path fill="none" d="m11 13 6-6M11 9.5a3.5 3.5 0 0 1 3.5 3.5M11 7a6 6 0 0 1 6 6" /></svg>,
+  "ops-ad-sites": <svg className="swatch" viewBox="0 0 24 24" fill="var(--bg)" stroke="var(--sim)" strokeWidth="1.8" aria-hidden><path d="M4 3h16v10q0 5-8 9-8-4-8-9z" /><path fill="none" d="m7.5 13 4.5-5 4.5 5M12 8v9" /></svg>,
+  "ops-comms": <svg className="swatch" viewBox="0 0 24 24" fill="var(--bg)" stroke="var(--sim)" strokeWidth="1.8" aria-hidden><path d="M12 1 23 12 12 23 1 12z" /><path fill="none" d="m9 17 3-9 3 9M10 14h4" /></svg>,
+  "ops-coverage": <span className="swatch" style={{ borderRadius: "50%", border: "1px dashed var(--info)", background: "var(--accent-tint)" }} />,
 };
 
-/** Ops view status: the plan the simulated picture is flying, any re-task waiting, and the simulator clock. */
+/** Ops view status: the simulator clock, then one card per situation with its missions (D72, cards D74). */
+const ST_TONE: Record<Status, string> = { waiting: "s-warning", approved: "s-ok", airborne: "s-sim", "on station": "s-sim",
+  returning: "s-sim", landed: "dim", "not flown": "s-critical" };
+const hm = (ms: number) => istTime(new Date(ms).toISOString()).replace(" IST", "");
+
+/** A package's aircraft as a small top view, tinted by its state. */
+const AcIcon = ({ type, tone }: { type: string; tone: string }) => (
+  <svg className={`msn-ac ${tone}`} viewBox="0 0 24 24" aria-hidden>
+    {GLYPH(type) === "helicopter"
+      ? <g fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M4 5h16M12 5v3M12 16v5M10 21h4" /><ellipse cx="12" cy="12" rx="3.3" ry="4.3" fill="currentColor" /></g>
+      : GLYPH(type) === "uav"
+      ? <path fill="currentColor" d="M11 3h2v15h3v1.8H8V18h3zM1 8h22v2.2H1z" />
+      : GLYPH(type) === "vehicle"
+      ? <path fill="currentColor" fillRule="evenodd" d="M9 2.5h6a2.5 2.5 0 0 1 2.5 2.5v14a2.5 2.5 0 0 1-2.5 2.5H9A2.5 2.5 0 0 1 6.5 19V5A2.5 2.5 0 0 1 9 2.5zM8.3 6.5v3.2h7.4V6.5z" />
+      : <path fill="currentColor" d="M12 2c.8 0 1.3 1.2 1.3 3v4.2l7.7 4.6v2l-7.7-2.2v4.3l2.4 1.9V21L12 20l-3.7 1v-1.2l2.4-1.9v-4.3L3 15.8v-2l7.7-4.6V5c0-1.8.5-3 1.3-3z" />}
+  </svg>
+);
+
+/** Ops panel missions (D72, D74): one card per situation (left edge in its intensity colour, approved / decide pill, a one-line
+ * summary), opening to one row per mission: priority badge, mission, aircraft and package, status, and a progress bar while
+ * it flies. Cards start closed (D78). A click frames that package on the map (D71); a second click frames it again. Routine
+ * tasking is listed once approved. */
 function OpsStatus() {
   const s = useStore();
-  const sum = useQuery({ queryKey: ["ops-summary"], queryFn: () => api<{ committed_plan_id: number | null; open_disruptions: number;
-    pending_plan_id: number | null; pending_plan_summary: string | null }>("/ops/summary"), refetchInterval: 20000 });
   const live = useQuery({ queryKey: ["scenarios", "live"], queryFn: () => api<LiveScenario[]>("/ops/scenarios/live"), refetchInterval: 15000 });
-  const d = sum.data;
-  const c = s.simClock;
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const c = s.simClock, now = c?.sim_now ?? new Date().toISOString(), t = Date.parse(now);
+  const sel = s.selection?.kind === "plan-mission" ? s.selection : null;
+  const groups: { key: string; name: string; script: Script; started: string }[] = (live.data ?? []).flatMap((r) => {
+    const script = scriptFor(r.code);
+    return script ? [{ key: String(r.id), name: r.name, script, started: r.started_sim }] : [];
+  });
+  if (validRun(s.demo.routine, routineStart(now))?.approvedAt) groups.push({ key: "routine", name: ROUTINE.name, script: ROUTINE, started: routineStart(now) });
   return (
     <div style={{ margin: "2px 0 6px" }}>
-      <div className="tool-row" style={{ borderTop: 0 }}><span>Simulator clock</span>
+      <div className="tool-row" style={{ borderTop: 0 }}><span>Simulator</span>
         <b className="mono" style={{ marginLeft: "auto", color: "var(--sim)" }}>{c ? `${zulu(c.sim_now)} ×${c.speed}${c.paused ? " paused" : ""}` : "not running"}</b></div>
-      <div className="tool-row"><span>Committed plan</span>
-        <b className="mono" style={{ marginLeft: "auto", color: "var(--text-1)" }}>{d?.committed_plan_id ? `#${d.committed_plan_id}` : "none"}</b></div>
-      {(live.data ?? []).map((r) => <div key={r.id} className="tool-row"><span className="s-warning">◆ {r.name}</span>
-        <a style={{ marginLeft: "auto" }} href={`/planner?view=situation&run=${r.id}`}>open ›</a></div>)}
-      {d?.pending_plan_id && <div className="tool-row" style={{ display: "block" }}>
-        <span className="s-warning">◆ Plan waiting for a decision: {d.pending_plan_summary}</span>
-        <div style={{ marginTop: 4 }}><a href="/planner?view=situation">Review in the planner ›</a></div></div>}
-      {!d?.committed_plan_id && !d?.pending_plan_id && <div className="toggle-note" style={{ margin: "4px 0 0" }}>No plan yet. <a href="/scenarios">Start a scenario</a> or <a href="/planner?view=situation">plan routine tasking ›</a></div>}
-      {d && d.open_disruptions > 0 && <div className="toggle-note" style={{ margin: "4px 0 0" }}>{d.open_disruptions} open disruption{d.open_disruptions > 1 ? "s" : ""}</div>}
+      <div className="ms-cap ops-sec">Missions <span>click one to see it on the map</span></div>
+      <div className="msn-list">
+        {groups.map(({ key, name, script, started }) => {
+          const sit = situationState(script, validRun(s.demo[key], started), now), { approvedAt, flying, next } = sit;
+          const rows = sit.rows.map((r) => ({ ...r, pct: FLYING.includes(r.st) ? ((t - r.launch) / (r.back - r.launch)) * 100 : null }));
+          const summary = !approvedAt ? `${rows.length} missions · waiting for your decision`
+            : [`${rows.length} missions`, flying ? `${flying} under way` : null, next ? `next launch ${hm(next)}` : flying ? null : "all back"].filter(Boolean).join(" · ");
+          const isOpen = open[key] ?? false;   // every card starts closed
+          const edge = key === "routine" ? "var(--accent)" : INT_COLOUR[script.intensity];
+          return (
+            <section key={key} className={`msn-card${isOpen ? " open" : ""}`} style={{ borderLeftColor: edge }}>
+              <button type="button" className="msn-head" aria-expanded={isOpen} onClick={() => setOpen({ ...open, [key]: !isOpen })}>
+                <span className="msn-title">{name}</span>
+                <span className={`fl-pill ${approvedAt ? "ok" : "warn"}`}>{approvedAt ? "approved" : "decide"}</span>
+                <span className="msn-sum">{summary}</span>
+                <span className="chev" aria-hidden>›</span>
+              </button>
+              {isOpen && <>
+                {rows.map(({ m, pkg, st, launch, pct }) => (
+                  <button key={m.id} type="button" className={`msn-row${sel?.run === key && sel.mission === m.id ? " on" : ""}`}
+                    onClick={() => s.set({ selection: { kind: "plan-mission", run: key, mission: m.id, fit: Date.now() } })}>
+                    <span className={`msn-pri ${m.priority.toLowerCase()}`}>{m.priority}</span>
+                    <span className="msn-name">{m.name}</span>
+                    <span className="msn-sub">
+                      {pkg && <AcIcon type={pkg.type} tone={ST_TONE[st]} />}
+                      <span className="msn-pkg">{pkg ? `${pkg.n} × ${pkg.type}` : "no package"}</span>
+                      <b className={ST_TONE[st]}>{st === "approved" ? `${isGround(pkg?.type) ? "leaves" : "launch"} ${hm(launch)}` : statusWord(st, pkg?.type)}</b>
+                    </span>
+                    {pct != null && <span className="msn-bar" aria-hidden><i style={{ width: `${Math.min(100, Math.max(2, pct))}%` }} /></span>}
+                  </button>
+                ))}
+                <Link className="msn-foot" to={`/planner?run=${key}&step=${approvedAt ? 4 : 1}`}>Open in Planner ›</Link>
+              </>}
+            </section>
+          );
+        })}
+      </div>
+      {groups.length === 0 && <div className="toggle-note" style={{ margin: "4px 0 0" }}>No scenario running. <Link to="/scenarios">Start one ›</Link></div>}
     </div>
   );
 }
@@ -112,6 +163,27 @@ function Toggle({ swatch, label, on, onChange, count, note, disabled }: { swatch
     </div>
   );
 }
+
+/** The simulated radar, air defence and comms sites (Infra panel, D75); "Show all coverage" appears once radar or AD sites are on. */
+function SiteToggle({ id, disabled }: { id: LayerId; disabled: boolean }) {
+  const s = useStore();
+  const cover = id === "ops-coverage";
+  if (cover && !s.layers["ops-radar-sites"] && !s.layers["ops-ad-sites"]) return null;
+  return <Toggle swatch={SWATCH[id]} label={LAYERS[id].label} on={s.layers[id]} onChange={() => s.toggleLayer(id)} disabled={disabled}
+    count={cover ? undefined : s.siteCounts[id]} note={cover ? "One outline per kind; sites that are down are left out." : undefined} />;
+}
+
+/** What the Ops map draws (D73, D76): a key that matches the map's styling (D78). */
+const OpsKey = () => (
+  <section>
+    <div className="ms-cap ops-sec">On the map</div>
+    <div className="ops-key">
+      <div><span className="key-ring" aria-hidden />Mission area
+        <small><i className="s-warning">waiting</i> · <i className="s-ok">approved</i> · <i className="s-sim">under way</i> · <i className="dim">done</i></small></div>
+      <div><span className="key-band" aria-hidden />Threat zone (generic)<small>hatched band: higher risk</small></div>
+    </div>
+  </section>
+);
 
 function Ramp({ stops, labels }: { stops: string[]; labels: string[] }) {
   return (
@@ -186,7 +258,11 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
           </>}
 
           {s.mode === "WX" && <>
-            {WX_LAYERS.map((w) => <Toggle key={w} swatch={WX[w].swatch} label={WX[w].label} on={s.wx[w]} onChange={() => s.toggleWx(w)} />)}
+            {WX_LAYERS.map((w) => {
+              const noKey = w === "rain" && owm.data?.owm === false;   // no OWM_API_KEY: no rain tiles to show
+              return <Toggle key={w} swatch={WX[w].swatch} label={WX[w].label} on={s.wx[w] && !noKey} onChange={() => s.toggleWx(w)}
+                disabled={noKey} note={noKey ? "Needs OWM_API_KEY in .env" : undefined} />;
+            })}
             {(s.wx.clouds || s.wx.rain) && (
               <label className="tool-row">Cloud & rain opacity
                 <input type="range" min={0.3} max={1} step={0.05} value={s.overlayOpacity} onChange={(e) => s.set({ overlayOpacity: Number(e.target.value) })} /></label>
@@ -201,13 +277,19 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
             {s.wx.metar && <div className="status-strip" style={{ fontSize: 11, marginTop: 4 }}>
               <span className="s-ok">● VFR</span><span className="s-info">○ MVFR</span><span className="s-warning">◆ IFR</span><span className="s-critical">■ LIFR</span>
             </div>}
-            {s.wx.rain && owm.data && !owm.data.owm && <div className="s-warning" style={{ fontSize: 12, marginTop: 6 }}>◆ Rain needs OWM_API_KEY in .env</div>}
           </>}
 
-          {s.mode === "OPS" && <OpsStatus />}
-          {viewLayers.map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)} disabled={focus}
-            count={k === "ops-sim" ? s.simTracks.filter((t) => t.kind === "SIM_IAF").length : k === "ops-unknown" ? s.simTracks.filter((t) => t.kind === "SIM_UNKNOWN").length : undefined} />)}
-          {s.mode === "OPS" && <div className="toggle-note" style={{ margin: "6px 0 0" }}><span className="sim-badge">SIM</span> Every object in this view is simulated. Threat zones are generic risk bands and exercise injects, not real deployments.</div>}
+          {s.mode === "OPS" && <>
+            <OpsStatus />
+            <OpsKey />
+            <div className="toggle-note" style={{ margin: "10px 0 0" }}><span className="sim-badge">SIM</span> Everything here is simulated.</div>
+          </>}
+          {s.mode !== "OPS" && viewLayers.filter((k) => !layerSim(k)).map((k) => <Toggle key={k} swatch={SWATCH[k]} label={LAYERS[k].label} on={s.layers[k]} onChange={() => s.toggleLayer(k)} disabled={focus} />)}
+          {s.mode === "INFRA" && <section>
+            <div className="ms-cap ops-sec">Defence & comms <span className="sim-badge">SIM</span></div>
+            {viewLayers.filter(layerSim).map((k) => <SiteToggle key={k} id={k} disabled={focus} />)}
+            <div className="toggle-note" style={{ margin: "6px 0 0" }}>Simulated sites placed by the generator, not real deployments. Hover or click one to see its coverage.</div>
+          </section>}
 
         </aside>
       )}
@@ -255,7 +337,7 @@ export function LayerRail({ liveTracks }: { liveTracks: { category: keyof typeof
               <p style={{ margin: "4px 0" }}>The bar under an IAF tag is aircraft serviceability (full bar = 100%): green 70% or more, yellow 45–69%, red under 45%.</p>
               <p style={{ margin: "4px 0" }}>A dot on the tag's corner marks an open warning (orange) or critical (red) alert. The "Q" end-cap is the quick reaction alert posture: blue when met, red when short.</p>
               <p style={{ margin: "4px 0" }}>Civil airports are light tags with a dark airliner and the IATA code. Live aircraft: yellow civil, neon blue military, orange UAVs and drones, red in an emergency.</p>
-              <p style={{ margin: "4px 0" }}>Telecom towers are masts with signal arcs on dark outlined tiles. Violet shields with an upward chevron are air defence sites, shown only in Ops. <span className="sim-badge">SIM</span> These sites and their launcher counts are simulated.</p>
+              <p style={{ margin: "4px 0" }}>Telecom towers are masts with signal arcs on dark outlined tiles. In Ops, violet shapes with a SIM tag are simulated sites: shields are air defence, round scopes are radars, diamonds are comms nodes. Hover or click a radar or air defence site to see its coverage ring. Faded sites are offline or in maintenance. <span className="sim-badge">SIM</span> These sites are simulated.</p>
               <p style={{ margin: "4px 0" }}>A selected live aircraft has a blue ring and solid blue recorded trail. A dashed teal line is its scheduled route (adsbdb, may differ from actual).</p>
               <p style={{ margin: "4px 0" }}>The glowing line is India's boundary as officially depicted by the Government of India.</p>
             </div>

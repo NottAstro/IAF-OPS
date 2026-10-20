@@ -1,6 +1,7 @@
-// Original top-down blueprint drawings, generated from per-type parameters (metres, nose at y = 0, x = 0 on the
-// centreline). Dimensions are approximate public figures; shapes are simplified planforms, not engineering data.
-import type { ReactNode } from "react";
+// Original top-down drawings, generated from per-type parameters (metres, nose at y = 0, x = 0 on the centreline).
+// Dimensions are approximate public figures; shapes are simplified planforms, not engineering data. D68: painted in a
+// realistic style (shaded skin, light panel lines, tinted glazing; gradients in Picture.tsx), with no national markings.
+import { Children, type ReactNode } from "react";
 
 type Wing = { x0: number; root: number; tip: number; sweep: number; kink?: number };
 type Tail = { x0: number; root: number; tip: number; span: number; sweep: number };
@@ -94,7 +95,41 @@ export const AIRCRAFT: Record<string, AircraftSpec> = {
 };
 for (const k of ["Il-78MKI", "A-50EI"]) AIRCRAFT[k] = { ...(AIRCRAFT["Il-76MD"] as JetSpec), ...(k === "A-50EI" ? { rotodome: 10.8 } : { refuelPods: true }) };
 
-const FILL = "var(--bp-fill)", INK = "var(--bp-ink)", LINE = "var(--bp-line)", DARK = "var(--bp-dark)", GLASS = "url(#bp-glass)";
+// skin gradients: wings and flat surfaces shade leading → trailing edge; bodies, nacelles and pods shade like a cylinder
+const FILL = "url(#ac-wing)", BODY = "url(#ac-body)", INK = "var(--ac-ink)", LINE = "var(--ac-line)", DARK = "var(--ac-dark)",
+  NOZZLE = "url(#ac-nozzle)", GLASS = "url(#ac-glass)";
+
+/** Paint family: picks the skin colours (Picture.tsx). */
+export type Family = "fighter" | "transport" | "trainer" | "heli" | "uav";
+export function familyOf(s: AircraftSpec): Family {
+  if ("heli" in s) return "heli";
+  if ("uav" in s) return "uav";
+  if (s.prop) return "trainer";
+  return typeof s.engines === "object" || s.rearEngines || (s.L > 20 && !s.nacelles) ? "transport" : "fighter";
+}
+
+/** Access panels, spine lines, wing spar and control-surface lines, and a canopy glint, for every fixed-wing type. */
+function details(s: JetSpec, half: number, wing: number[][]): ReactNode[] {
+  const L = s.L, c = s.canopy, w = half * 0.32, h = Math.max(0.35, L * 0.028), out: ReactNode[] = [];
+  const lw = Math.max(0.035, L * 0.0028);
+  for (const sg of [1, -1]) {
+    out.push(<line key={`sp${sg}`} x1={sg * half * 0.32} y1={c.x0 + c.len} x2={sg * half * 0.28} y2={L * 0.9} stroke={LINE} strokeWidth={lw} />);
+    // front spar: parallel to the leading edge at a third of the chord; control-surface cuts at 45% and 75% of the span
+    // a cranked delta's spar starts at the crank, so it stays inside the planform
+    const [rx, ry] = s.wing.kink ? wing[1] : wing[0], [tx, ty] = wing[wing.length - 3], [ex, ey] = wing[wing.length - 2], [bx, by] = wing[wing.length - 1];
+    const rc = by - ry, tc = ey - ty;
+    out.push(<line key={`fs${sg}`} x1={sg * rx} y1={ry + rc * 0.33} x2={sg * tx} y2={ty + tc * 0.33} stroke={LINE} strokeWidth={lw} />);
+    for (const f of [0.45, 0.75]) {
+      const x = bx + (ex - bx) * f, y = by + (ey - by) * f, chord = rc + (tc - rc) * f;
+      out.push(<line key={`cs${sg}${f}`} x1={sg * x} y1={y} x2={sg * x} y2={y - chord * 0.3} stroke={LINE} strokeWidth={lw} />);
+    }
+  }
+  for (const f of [0.4, 0.52, 0.66]) for (const sg of [1, -1])
+    out.push(<rect key={`ap${f}${sg}`} x={sg * half * 0.48 - w / 2} y={L * f} width={w} height={h} rx={h * 0.25} fill="none" stroke={LINE} strokeWidth={0.04} />);
+  out.push(<circle key="ant" cx={0} cy={c.x0 + c.len + Math.max(0.4, L * 0.03)} r={Math.max(0.09, L * 0.008)} fill="var(--ac-radome)" />);
+  out.push(<ellipse key="glint" cx={-c.w * 0.15} cy={c.x0 + c.len * 0.32} rx={c.w * 0.14} ry={c.len * 0.18} fill="var(--ac-glint)" />);
+  return out;
+}
 const tan = (d: number) => Math.tan((d * Math.PI) / 180);
 const pts = (p: number[][]) => p.map(([a, b]) => `${a.toFixed(3)},${b.toFixed(3)}`).join(" ");
 const both = (p: number[][], props: Record<string, unknown> = {}) => (
@@ -120,7 +155,7 @@ function Jet({ s }: { s: JetSpec }) {
   if (typeof s.engines === "object")
     for (const f of s.engines.at) for (const sg of [1, -1]) {
       const cx = sg * semi * f, e = s.engines as Pods;
-      out.push(<rect key={`n${f}${sg}`} x={cx - e.dia / 2} y={e.x} width={e.dia} height={e.len} rx={e.dia / 2} fill={FILL} stroke={INK} strokeWidth={0.08} />);
+      out.push(<rect key={`n${f}${sg}`} x={cx - e.dia / 2} y={e.x} width={e.dia} height={e.len} rx={e.dia / 2} fill={BODY} stroke={INK} strokeWidth={0.08} />);
       out.push(<rect key={`i${f}${sg}`} x={cx - e.dia / 2 + 0.08} y={e.x} width={e.dia - 0.16} height={0.35} rx={0.15} fill={DARK} />);
       if (e.prop) out.push(<line key={`p${f}${sg}`} x1={cx - e.prop / 2} y1={e.x - 0.25} x2={cx + e.prop / 2} y2={e.x - 0.25} stroke={INK} strokeWidth={0.18} strokeLinecap="round" />);
     }
@@ -128,8 +163,8 @@ function Jet({ s }: { s: JetSpec }) {
   if (s.nacelles) {
     const n = s.nacelles;
     for (const sg of [1, -1]) {
-      out.push(<rect key={`na${sg}`} x={sg * n.off - n.w / 2} y={n.y0} width={n.w} height={L * 0.95 - n.y0} rx={0.45} fill={FILL} stroke={INK} strokeWidth={0.08} />);
-      out.push(<rect key={`nz${sg}`} x={sg * n.off - n.w * 0.42} y={L * 0.95 - 0.1} width={n.w * 0.84} height={0.9} rx={0.2} fill={DARK} stroke={INK} strokeWidth={0.06} />);
+      out.push(<rect key={`na${sg}`} x={sg * n.off - n.w / 2} y={n.y0} width={n.w} height={L * 0.95 - n.y0} rx={0.45} fill={BODY} stroke={INK} strokeWidth={0.08} />);
+      out.push(<rect key={`nz${sg}`} x={sg * n.off - n.w * 0.42} y={L * 0.95 - 0.1} width={n.w * 0.84} height={0.9} rx={0.2} fill={NOZZLE} stroke={INK} strokeWidth={0.06} />);
     }
   }
   out.push(both(wing, { fill: FILL, stroke: INK, strokeWidth: 0.09, strokeLinejoin: "round" }));
@@ -140,14 +175,19 @@ function Jet({ s }: { s: JetSpec }) {
   const fusPath = `M0,0 Q${half * 0.95},${nb * 0.18} ${half},${nb} L${half},${L * 0.78} L${tailHalf},${L * 0.97} L${-tailHalf},${L * 0.97} L${-half},${L * 0.78} L${-half},${nb} Q${-half * 0.95},${nb * 0.18} 0,0 Z`;
   if (s.lerx) out.push(both([[half * 0.9, s.canopy.x0 + s.canopy.len * 0.6], [half * 0.92 + 0.9, s.wing.x0 - 0.4], [half * 0.92 + 1.4, s.wing.x0 + 0.6], [half * 0.9, s.wing.x0 + 0.6]],
     { fill: FILL, stroke: INK, strokeWidth: 0.07 }));
-  out.push(<path key="fus" d={fusPath} fill={FILL} stroke={INK} strokeWidth={0.1} strokeLinejoin="round" />);
+  out.push(<path key="fus" d={fusPath} fill={BODY} stroke={INK} strokeWidth={0.1} strokeLinejoin="round" />);
+  if (!s.prop && !s.glassNose) {  // radome: a lighter nose cone with its joint line
+    const ry = nb * 0.55;
+    out.push(<path key="rdm" d={`M0,0.04 Q${half * 0.74},${nb * 0.12} ${half * 0.8},${ry} L${-half * 0.8},${ry} Q${-half * 0.74},${nb * 0.12} 0,0.04 Z`} fill="url(#ac-radome)" />);
+    out.push(<line key="rdl" x1={-half * 0.8} y1={ry} x2={half * 0.8} y2={ry} stroke={LINE} strokeWidth={0.05} />);
+  }
   if (s.canard) out.push(both(surf(s.canard, half * 0.9), { fill: FILL, stroke: INK, strokeWidth: 0.07 }));
   // nozzles
-  if (s.engines === "single") out.push(<rect key="nz" x={-tailHalf * 0.8} y={L * 0.97 - 0.15} width={tailHalf * 1.6} height={0.7} rx={0.2} fill={DARK} />);
-  if (s.engines === "twin") for (const sg of [1, -1]) out.push(<rect key={`tz${sg}`} x={sg * tailHalf * 0.5 - tailHalf * 0.42} y={L * 0.97 - 0.15} width={tailHalf * 0.84} height={0.7} rx={0.2} fill={DARK} />);
+  if (s.engines === "single" && !s.prop && !s.rearEngines) out.push(<rect key="nz" x={-tailHalf * 0.8} y={L * 0.97 - 0.15} width={tailHalf * 1.6} height={0.7} rx={0.2} fill={NOZZLE} />);
+  if (s.engines === "twin") for (const sg of [1, -1]) out.push(<rect key={`tz${sg}`} x={sg * tailHalf * 0.5 - tailHalf * 0.42} y={L * 0.97 - 0.15} width={tailHalf * 0.84} height={0.7} rx={0.2} fill={NOZZLE} />);
   if (s.rearEngines) for (const sg of [1, -1]) {
     const e = s.rearEngines;
-    out.push(<rect key={`re${sg}`} x={sg * (half + e.dia / 2 + 0.15) - e.dia / 2} y={e.x} width={e.dia} height={e.len} rx={e.dia / 2} fill={FILL} stroke={INK} strokeWidth={0.08} />);
+    out.push(<rect key={`re${sg}`} x={sg * (half + e.dia / 2 + 0.15) - e.dia / 2} y={e.x} width={e.dia} height={e.len} rx={e.dia / 2} fill={BODY} stroke={INK} strokeWidth={0.08} />);
     out.push(<rect key={`ri${sg}`} x={sg * (half + e.dia / 2 + 0.15) - e.dia / 2 + 0.08} y={e.x} width={e.dia - 0.16} height={0.3} rx={0.12} fill={DARK} />);
   }
   // vertical fins seen from above
@@ -164,7 +204,7 @@ function Jet({ s }: { s: JetSpec }) {
     const [rx, ry] = wing[wing.length - 1], [tx, ty] = wing[wing.length - 2];
     const k = 0.78;
     out.push(<line key={`fl${sg}`} x1={sg * rx} y1={ry - s.wing.root * 0.22} x2={sg * (rx + (tx - rx) * k)} y2={ry - s.wing.root * 0.22 + (ty - ry) * k} stroke={LINE} strokeWidth={0.06} />);
-    out.push(<line key={`sl${sg}`} x1={sg * (half * 0.95)} y1={s.wing.x0 + 0.35} x2={sg * tipLE[0]} y2={tipLE[1] + 0.25} stroke={LINE} strokeWidth={0.05} strokeDasharray="0.4 0.25" />);
+    if (!s.wing.kink) out.push(<line key={`sl${sg}`} x1={sg * (half * 0.95)} y1={s.wing.x0 + 0.35} x2={sg * tipLE[0]} y2={tipLE[1] + 0.25} stroke={LINE} strokeWidth={0.05} />);
   }
   for (const f of [0.35, 0.5, 0.62]) out.push(<line key={`fr${f}`} x1={-half * 0.98} y1={L * f} x2={half * 0.98} y2={L * f} stroke={LINE} strokeWidth={0.05} />);
   if (s.tipRails) for (const sg of [1, -1]) {
@@ -178,7 +218,7 @@ function Jet({ s }: { s: JetSpec }) {
   if (s.refuelPods) for (const sg of [1, -1]) out.push(<rect key={`rp${sg}`} x={sg * semi * 0.72 - 0.4} y={s.wing.x0 + semi * 0.72 * tan(s.wing.sweep) - 0.5} width={0.8} height={4.2} rx={0.4} fill={DARK} stroke={INK} strokeWidth={0.06} />);
   if (s.beam) out.push(<rect key="beam" x={-0.45} y={L * 0.27} width={0.9} height={L * 0.47} rx={0.2} fill={DARK} stroke={INK} strokeWidth={0.06} />);
   if (s.rotodome) {
-    out.push(<circle key="rd" cx={0} cy={L * 0.6} r={s.rotodome / 2} fill={FILL} stroke={INK} strokeWidth={0.12} />);
+    out.push(<circle key="rd" cx={0} cy={L * 0.6} r={s.rotodome / 2} fill={BODY} stroke={INK} strokeWidth={0.12} />);
     out.push(<circle key="rd2" cx={0} cy={L * 0.6} r={s.rotodome / 2 - 0.9} fill="none" stroke={LINE} strokeWidth={0.08} />);
     out.push(<line key="rd3" x1={-s.rotodome / 2} y1={L * 0.6} x2={s.rotodome / 2} y2={L * 0.6} stroke={LINE} strokeWidth={0.08} />);
   }
@@ -191,24 +231,25 @@ function Jet({ s }: { s: JetSpec }) {
     out.push(<line key="pr" x1={-s.prop / 2} y1={-0.15} x2={s.prop / 2} y2={-0.15} stroke={INK} strokeWidth={0.12} strokeLinecap="round" />);
     out.push(<circle key="sp" cx={0} cy={0.05} r={0.22} fill={DARK} />);
   }
-  return <>{out}</>;
+  out.push(...details(s, half, wing));
+  return <>{Children.toArray(out)}</>;   // both() returns unkeyed fragments; toArray keys them by position
 }
 
 function Heli({ s }: { s: HeliSpec }) {
   const w = s.fusW, half = w / 2, out: ReactNode[] = [];
   const rotor = (cy: number, key: string) => (
     <g key={key}>
-      <circle cx={0} cy={cy} r={s.D / 2} fill="var(--bp-disc)" stroke={LINE} strokeWidth={0.08} strokeDasharray="0.6 0.4" />
+      <circle cx={0} cy={cy} r={s.D / 2} fill="var(--ac-disc)" stroke={LINE} strokeWidth={0.08} strokeDasharray="0.6 0.4" />
       {Array.from({ length: s.blades }, (_, i) => {
         const a = (i / s.blades) * 360 + 18;
-        return <rect key={i} x={-0.24} y={cy - s.D / 2 + 0.2} width={0.48} height={s.D / 2 - 0.2} rx={0.2} fill={FILL} stroke={INK} strokeWidth={0.06}
+        return <rect key={i} x={-0.24} y={cy - s.D / 2 + 0.2} width={0.48} height={s.D / 2 - 0.2} rx={0.2} fill="var(--ac-dark-hi)" stroke={INK} strokeWidth={0.06}
           transform={`rotate(${a} 0 ${cy})`} />;
       })}
       <circle cx={0} cy={cy} r={0.55} fill={DARK} stroke={INK} strokeWidth={0.06} />
     </g>
   );
   if (s.tandem) {
-    out.push(<rect key="fus" x={-half} y={0} width={w} height={s.fusL} rx={1.4} fill={FILL} stroke={INK} strokeWidth={0.1} />);
+    out.push(<rect key="fus" x={-half} y={0} width={w} height={s.fusL} rx={1.4} fill={BODY} stroke={INK} strokeWidth={0.1} />);
     out.push(<rect key="aft" x={-half * 0.7} y={s.fusL * 0.78} width={w * 0.7} height={s.fusL * 0.22} rx={0.6} fill={FILL} stroke={INK} strokeWidth={0.08} />);
     for (const sg of [1, -1]) out.push(<rect key={`eng${sg}`} x={sg * (half + 0.2) - 0.5} y={s.fusL * 0.7} width={1.0} height={3.6} rx={0.45} fill={DARK} />);
     out.push(<ellipse key="cp" cx={0} cy={1.2} rx={half * 0.75} ry={0.9} fill={GLASS} stroke={INK} strokeWidth={0.06} />);
@@ -226,7 +267,7 @@ function Heli({ s }: { s: HeliSpec }) {
   }
   const nose = s.slim ? 0.35 : 0.6;
   out.push(<path key="fus" d={`M0,0 Q${half},${nose} ${half},${body * 0.35} L${half},${body * 0.8} Q${half * 0.6},${body} 0,${body} Q${-half * 0.6},${body} ${-half},${body * 0.8} L${-half},${body * 0.35} Q${-half},${nose} 0,0 Z`}
-    fill={FILL} stroke={INK} strokeWidth={0.1} />);
+    fill={BODY} stroke={INK} strokeWidth={0.1} />);
   out.push(<rect key="eng" x={-half * 0.55} y={body * 0.3} width={half * 1.1} height={body * 0.42} rx={0.35} fill={DARK} opacity={0.75} />);
   out.push(s.slim
     ? <g key="cp"><ellipse cx={0} cy={body * 0.1} rx={half * 0.75} ry={body * 0.07} fill={GLASS} stroke={INK} strokeWidth={0.05} /><ellipse cx={0} cy={body * 0.24} rx={half * 0.75} ry={body * 0.07} fill={GLASS} stroke={INK} strokeWidth={0.05} /></g>
@@ -244,7 +285,7 @@ function Uav({ s }: { s: UavSpec }) {
         {[[1, 1], [1, -1], [-1, 1], [-1, -1]].map(([x, y]) => (
           <g key={`${x}${y}`}>
             <line x1={0} y1={0} x2={x * a} y2={y * a} stroke={INK} strokeWidth={0.06} />
-            <circle cx={x * a} cy={y * a} r={0.15} fill="var(--bp-disc)" stroke={LINE} strokeWidth={0.015} strokeDasharray="0.03 0.02" />
+            <circle cx={x * a} cy={y * a} r={0.15} fill="var(--ac-disc)" stroke={LINE} strokeWidth={0.015} strokeDasharray="0.03 0.02" />
             <circle cx={x * a} cy={y * a} r={0.035} fill={DARK} />
           </g>
         ))}
@@ -259,7 +300,7 @@ function Uav({ s }: { s: UavSpec }) {
       <rect x={-boom} y={s.L - 0.9} width={boom * 2} height={0.55} rx={0.12} fill={FILL} stroke={INK} strokeWidth={0.04} />
       {both([[podW * 0.4, wx], [semi, wx + 0.12], [semi, wx + 0.12 + chord * 0.75], [podW * 0.4, wx + chord]], { fill: FILL, stroke: INK, strokeWidth: 0.05 })}
       <path d={`M0,0 Q${podW / 2},${podL * 0.08} ${podW / 2},${podL * 0.3} L${podW * 0.4},${podL} L${-podW * 0.4},${podL} L${-podW / 2},${podL * 0.3} Q${-podW / 2},${podL * 0.08} 0,0 Z`}
-        fill={FILL} stroke={INK} strokeWidth={0.05} />
+        fill={BODY} stroke={INK} strokeWidth={0.05} />
       <ellipse cx={0} cy={podL * 0.18} rx={podW * 0.3} ry={podL * 0.08} fill={DARK} />
       <line x1={-s.prop! / 2} y1={podL + 0.1} x2={s.prop! / 2} y2={podL + 0.1} stroke={INK} strokeWidth={0.07} strokeLinecap="round" />
       <line x1={0} y1={podL * 0.35} x2={0} y2={podL * 0.95} stroke={LINE} strokeWidth={0.03} />
