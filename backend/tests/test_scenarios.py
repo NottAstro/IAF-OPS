@@ -154,6 +154,20 @@ def test_situation_answers_with_plan_missions_impacts_requirements_and_transfers
         assert m["tag"] and m["status"] in ("in", "proposed", "uncovered")
 
 
+def test_routine_tasking_lists_what_its_uncovered_missions_would_need():
+    """D64: the side panel isn't empty for routine tasking: each uncovered routine mission shows the aircraft, aircrew,
+    runway and fuel its best option would take (or why no base can fly it), and a "short" row is what blocks it."""
+    s = login("airhq").get("/api/v1/ops/scenarios/situation").json()
+    routine = [q for q in s["requirements"] if not q.get("run_id")]
+    gaps = [x["mission_id"] for x in s["impacts"] if x.get("scenario") == "Routine" and x["status"] in ("uncovered", "apply")
+            and x.get("mission_id")]
+    assert {q["mission_id"] for q in routine if q.get("mission_id")} >= set(gaps[:12])
+    for q in routine:
+        assert q["scenario"] == "Routine" and q["status"] in ("met", "approve", "wait", "short")
+        assert q["label"] and q["need"] and q["from"] and q["have"]
+    assert s["counts"]["short"] == sum(1 for q in s["requirements"] if q["status"] == "short")
+
+
 def test_a_routine_mission_is_linked_to_the_scenario_that_left_it_uncovered():
     """D57: "Runway closed: VOBR …" under a scenario that closed VOBR links the mission to it; a range reason that only
     happens to name the base does not."""
@@ -174,3 +188,32 @@ def test_a_plan_says_why_it_exists_in_plain_words():
         "Routine: crew member unavailable for Training near Pune"
     assert why_text([("MISSION_NEW", "x", "Air attack", "a"), ("MISSION_NEW", "y", "Air attack", "b"),
                      ("RUNWAY_CLOSED", "z", None, "c")]) == "Air attack: 2 new missions · Routine: 1 runway closed"
+
+
+NEW = ["cyclone-landfall", "himalayan-earthquake", "eastern-intrusion", "desert-dust-storm", "winter-fog", "spares-shortage",
+       "bird-strike", "rail-accident", "forest-fire"]
+
+
+def test_the_added_scenarios_start_apply_their_effects_and_get_an_answer():
+    """D63: every added scenario starts at each intensity's defaults, records its effects, reads in words, and each mission
+    it demands gets a package or a reason (never silence); ending it withdraws them."""
+    air, adm = login("airhq"), login("admin")
+    codes = {s["code"] for s in air.get("/api/v1/ops/scenarios").json()["scenarios"]}
+    assert set(NEW) <= codes and len(codes) >= 17
+    for code in NEW:
+        r = air.post(f"/api/v1/ops/scenarios/{code}/start", json={})
+        assert r.status_code == 200, (code, r.text)
+        run = r.json()["run_id"]
+        try:
+            with SessionLocal() as db:
+                fp = db.get(M.ExerciseRun, run).footprint
+            assert fp["effects"], code
+            air.post("/api/v1/ops/disruptions/check")
+            resp = air.get(f"/api/v1/ops/scenarios/runs/{run}/response").json()
+            assert "{" not in resp["lead"], (code, resp["lead"])                   # every placeholder filled
+            popups = [e for e in fp["effects"] if e["kind"] == "MISSION_POPUP"]
+            demanded = [i for i in resp["impacts"] if i["status"] != "info"]
+            assert len(demanded) >= len(popups), (code, resp["impacts"])
+            assert all(i["rec"] for i in demanded)
+        finally:
+            assert adm.post(f"/api/v1/ops/scenarios/runs/{run}/end").status_code == 200

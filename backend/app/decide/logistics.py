@@ -119,16 +119,31 @@ def recommend(db: Session, st: S.OpsState, plan_id: int | None, focus_bases: set
     eta = lambda km: st.now + timedelta(hours=D.LOAD_H + km / D.CONVOY_KMH)     # noqa: E731
     moves, unmet = [], []
 
-    def emit(kind, cat, unit, scale, solved, why):
+    def donors(offers, d, r, q, need_by):
+        """D63: other bases that could send the same quantity instead (spare beyond their own reserve), nearest first."""
+        out = []
+        for b, spare in offers.items():
+            if b in (d, r) or spare < q or b not in where or r not in where:
+                continue
+            km = dist_km(where[b], where[r]) * D.ROAD_FACTOR
+            if km <= D.TRANSFER_MAX_KM:
+                out.append({"from_base": {"id": b, "code": names[b][0], "name": names[b][1]}, "distance_km": round(km),
+                            "eta": eta(km), "late": need_by is not None and eta(km) > need_by, "spare": spare})
+        return sorted(out, key=lambda x: x["distance_km"])[:D.MAX_DONOR_ALTERNATIVES]
+
+    def emit(kind, cat, unit, scale, solved, why, offers=None):
         sol, short = solved
         for d, r, q, km in sol:
             # needed by the first launch that draws on it; fuel below reserve is needed now; spares only restock
             need_by = first.get((r, cat)) or (st.now if kind == "FUEL" or cat.startswith("ARMAMENT") else None)
+            alts = donors(offers or {}, d, r, q, need_by)
+            for a in alts:
+                a["spare"] *= scale
             moves.append({"key": f"{kind}:{cat}:{d}:{r}", "kind": kind, "category": cat, "label": label(cat),
                           "qty": q * scale, "unit": unit, "from_base": {"id": d, "code": names[d][0], "name": names[d][1]},
                           "to_base": {"id": r, "code": names[r][0], "name": names[r][1]}, "distance_km": round(km),
                           "depart_ts": st.now, "eta": eta(km), "needed_by": need_by,
-                          "late": need_by is not None and eta(km) > need_by, "reason": why(r)})
+                          "late": need_by is not None and eta(km) > need_by, "reason": why(r), "alternatives": alts})
         for r, q in short.items():
             unmet.append({"kind": kind, "category": cat, "label": label(cat), "qty": q * scale, "unit": unit,
                           "to_base": {"id": r, "code": names[r][0], "name": names[r][1]},
@@ -148,7 +163,7 @@ def recommend(db: Session, st: S.OpsState, plan_id: int | None, focus_bases: set
                 offers[b] = math.floor(spare / 1000)
     fuel_why = lambda r: (f"{names[r][1]} needs more fuel for its {sorties[r]} planned sorties and its reserve"  # noqa: E731
                           if fuel_d.get(r) else f"{names[r][1]} is below its fuel reserve")
-    emit("FUEL", "ATF", "L", 1000, _solve(needs, offers, where), fuel_why)
+    emit("FUEL", "ATF", "L", 1000, _solve(needs, offers, where), fuel_why, offers)
 
     # ---- weapons and spares, per category
     stock = _stock(db)
@@ -177,6 +192,6 @@ def recommend(db: Session, st: S.OpsState, plan_id: int | None, focus_bases: set
             continue
         why = (lambda r, cat=cat: f"{names[r][1]} short of {label(cat).lower()} for its planned packages") if armament else \
               (lambda r, cat=cat: f"{names[r][1]} below its reorder level for {label(cat).lower()}")
-        emit("STOCK", cat, unit, 1, _solve(needs, offers, where), why)
+        emit("STOCK", cat, unit, 1, _solve(needs, offers, where), why, offers)
     moves.sort(key=lambda m: (m["needed_by"] is None, m["needed_by"] or st.now, m["kind"] != "FUEL", -m["qty"]))
     return {"moves": moves, "unmet": unmet}

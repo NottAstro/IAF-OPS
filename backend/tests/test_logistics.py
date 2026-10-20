@@ -91,3 +91,17 @@ def test_transfers_are_for_air_hq_and_admin_only():
         r = c.post("/api/v1/ops/transfers", json={"moves": [{"kind": "FUEL", "category": "ATF", "qty": 1000, "from_base_id": 1,
                                                              "to_base_id": 2}]})
         assert r.status_code == 403, (who, r.status_code)
+
+
+def test_a_move_offers_other_donors_that_could_send_the_same():
+    """D63: besides the planner's donor, the nearest other bases with enough spare are offered, nearest first."""
+    with SessionLocal() as db:
+        hx = _base(db, "VIHX")
+        db.execute(text("UPDATE fuel_storage SET current_l = reserve_l * 0.5 WHERE base_id = :b AND grade = 'ATF'"), {"b": hx})
+        out = LG.recommend(db, S.build(db), None, set())
+        m = next(m for m in out["moves"] if m["kind"] == "FUEL" and m["to_base"]["id"] == hx)
+        alts = m["alternatives"]
+        assert alts, "another base within road reach has spare fuel"
+        assert all(a["from_base"]["id"] not in (m["from_base"]["id"], hx) and a["spare"] >= m["qty"] for a in alts)
+        assert [a["distance_km"] for a in alts] == sorted(a["distance_km"] for a in alts)
+        db.rollback()

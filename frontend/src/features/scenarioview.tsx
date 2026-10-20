@@ -10,15 +10,15 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type ReactNode, useEffect, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
-import type { Assessment, Fix, Impact, ImpactChange, Intensity, MissionOptions, PlanItemView, PlanView, ScenarioBlock, Situation, TransferMove, User, When } from "../api/types";
-import { ErrorText, Loading, Sim } from "../components/ui";
+import type { Assessment, DonorOption, Fix, Impact, ImpactChange, Intensity, MissionOptions, PlanItemView, PlanView, ScenarioBlock, Situation, TransferMove, User, When } from "../api/types";
+import { ErrorText, Loading, Sim, onActivate } from "../components/ui";
 import { istTime } from "../lib/format";
 import { useStore } from "../store";
 
 export const INT_COLOUR: Record<Intensity, string> = { LOW: "var(--ok)", MEDIUM: "var(--caution)", HIGH: "var(--warning)", SEVERE: "var(--critical)" };
 const INT_N: Record<Intensity, number> = { LOW: 1, MEDIUM: 2, HIGH: 3, SEVERE: 4 };
 const SEV: Record<string, [string, string]> = { c: ["■", "var(--critical)"], w: ["◆", "var(--warning)"], y: ["▲", "var(--caution)"], n: ["—", "var(--text-3)"] };
-const REQ: Record<string, [string, string]> = { met: ["✓ available", "var(--ok)"], approve: ["once approved", "var(--warning)"], wait: ["waiting", "var(--caution)"] };
+const REQ: Record<string, [string, string]> = { met: ["✓ available", "var(--ok)"], approve: ["once approved", "var(--warning)"], wait: ["waiting", "var(--caution)"], short: ["short", "var(--critical)"] };
 
 /** Intensity as four dots (colour plus count, never colour alone). */
 export const IntensityDots = ({ i }: { i: Intensity | null | undefined }) => (
@@ -124,19 +124,22 @@ function whyText(it: PlanItemView | undefined): string {
 type Decision = "keep" | "choice" | "accept" | "fix" | "approve" | "skip";
 const taskKey = (t: Task, k: number) => (t.mission_id ? `m${t.mission_id}` : `i${k}`);
 
-function useDecisions(planId: number | undefined, sit: string): [Record<string, Decision>, (k: string, d: Decision | null) => void] {
-  const sk = `airops.planner.decisions.${planId ?? 0}.${sit}`;
-  const read = () => { try { return JSON.parse(sessionStorage.getItem(sk) ?? "{}") as Record<string, Decision>; } catch { return {}; } };
-  const [dec, setDec] = useState<Record<string, Decision>>(read);
-  useEffect(() => setDec(read()), [sk]); // eslint-disable-line react-hooks/exhaustive-deps
-  const set = (k: string, d: Decision | null) => setDec((cur) => {
+function useSessionMap<T>(sk: string): [Record<string, T>, (k: string, v: T | null) => void] {
+  const read = () => { try { return JSON.parse(sessionStorage.getItem(sk) ?? "{}") as Record<string, T>; } catch { return {}; } };
+  const [map, setMap] = useState<Record<string, T>>(read);
+  useEffect(() => setMap(read()), [sk]); // eslint-disable-line react-hooks/exhaustive-deps
+  const set = (k: string, v: T | null) => setMap((cur) => {
     const next = { ...cur };
-    if (d) next[k] = d; else delete next[k];
-    try { sessionStorage.setItem(sk, JSON.stringify(next)); } catch { /* private window: decisions last until reload */ }
+    if (v) next[k] = v; else delete next[k];
+    try { sessionStorage.setItem(sk, JSON.stringify(next)); } catch { /* private window: lasts until reload */ }
     return next;
   });
-  return [dec, set];
+  return [map, set];
 }
+
+const useDecisions = (planId: number | undefined, sit: string) => useSessionMap<Decision>(`airops.planner.decisions.${planId ?? 0}.${sit}`);
+/** D63: a different donor base chosen for a stock move. */
+const useDonors = (planId: number | undefined, sit: string) => useSessionMap<DonorOption>(`airops.planner.donors.${planId ?? 0}.${sit}`);
 
 // ---------------------------------------------------------------- the page
 export function PlannerFlow({ user }: { user: User }) {
@@ -211,11 +214,17 @@ function SituationFlow({ s, sits, sit, step, user, go, back }: { s: Situation; s
   const canPlan = user.role === "ADMIN" || user.role === "COMMAND_HQ";
   const plan = useQuery({ queryKey: ["plan", s.plan?.id], queryFn: () => api<PlanView>(`/ops/plans/${s.plan!.id}`), enabled: !!s.plan, refetchInterval: 15000 });
   const [dec, setDec] = useDecisions(s.plan?.id, sit.key);
+  const [donor, setDonor] = useDonors(s.plan?.id, sit.key);
+  const [openK, setOpenK] = useState<Record<string, boolean>>({});
   const t = tally(sit);
   const tasks = buildTasks(sit, t.act, plan.data);
   const scenarioBases = new Set(sits.filter((x) => x.run).flatMap((x) => x.bases));
   const moves = s.transfers.moves.filter((m) => sit.run ? sit.bases.includes(m.to_base.id) || sit.bases.includes(m.from_base.id)
-    : !scenarioBases.has(m.to_base.id) && !scenarioBases.has(m.from_base.id));
+    : !scenarioBases.has(m.to_base.id) && !scenarioBases.has(m.from_base.id))
+    .map((m) => (donor[m.key] ? { ...m, ...donor[m.key], planner_from: m.from_base } : m));   // your donor, if you picked one
+  const cardKeys = [...tasks.map((x, k) => taskKey(x, k)), ...moves.map((m) => m.key)];
+  const toggle = (k: string) => setOpenK((o) => ({ ...o, [k]: !o[k] }));
+  const setAll = (v: boolean) => setOpenK(Object.fromEntries(cardKeys.map((k) => [k, v])));
   const chosen = (mid?: number) => !!mid && plan.data?.items.find((i) => i.mission.id === mid)?.explanation?.rows[0]?.label === "Chosen by";
   const decisionOf = (x: Task, k: number): Decision | undefined => dec[taskKey(x, k)] ?? (chosen(x.mission_id) ? "choice" : x.status === "in" ? "keep" : undefined);
   const open = tasks.filter((x, k) => !decisionOf(x, k)).length + moves.filter((m) => !dec[m.key]).length;
@@ -265,25 +274,19 @@ function SituationFlow({ s, sits, sit, step, user, go, back }: { s: Situation; s
       {step === 2 && <div className="plan-grid">
         <section style={{ minWidth: 0 }}>
           {tasks.length === 0 && moves.length === 0 && <div className="empty">Nothing to plan for this situation.</div>}
+          {cardKeys.length > 0 && <div className="tk-bulk"><span className="muted">{cardKeys.length} item{cardKeys.length === 1 ? "" : "s"} · open one to see
+            the planner's suggestion, why, and the other options</span>
+            <span><button className="tog" onClick={() => setAll(true)}>Open all</button> · <button className="tog" onClick={() => setAll(false)}>Close all</button></span></div>}
           {tasks.map((x, k) => (
             <TaskCard key={taskKey(x, k)} n={k + 1} t={x} plan={plan.data} decision={decisionOf(x, k)} canPlan={canPlan} busy={split.isPending}
+              open={!!openK[taskKey(x, k)]} onToggle={() => toggle(taskKey(x, k))}
               onDecide={(d) => setDec(taskKey(x, k), d)} onChosen={() => { setDec(taskKey(x, k), "choice"); refresh(); }}
               onFix={(f) => x.mission_id && split.mutate({ id: x.mission_id, f }, { onSuccess: () => setDec(taskKey(x, k), "fix") })} />
           ))}
           {moves.map((m, k) => (
-            <div key={m.key} className={`tk${dec[m.key] ? " decided" : ""}`}>
-              <div className="tk-top"><span className="num">{tasks.length + k + 1}</span>
-                <div className="prob">{m.reason}<small>needed {m.needed_by ? hh(m.needed_by) : "to restock"}</small></div>
-                <span className="fl-pill warn">stock move</span></div>
-              <div className="tk-ans"><span />
-                <div><div className="lbl">Planner's recommendation</div>
-                  <div className="pick">Move {qtyText(m)} from <b>{m.from_base.name}</b> to {m.to_base.name} ({m.distance_km} km)</div>
-                  <div className="why">Nearest base with spare stock above its own reserve · arrives {hh(m.eta)}{m.late ? <span className="s-caution"> (after it is needed)</span> : null}</div></div>
-                <div className="tk-act">{dec[m.key] ? <><span className={dec[m.key] === "approve" ? "s-ok" : "dim"}>{dec[m.key] === "approve" ? "✓ Approve" : "Skip"}</span>
-                    <button className="tog" onClick={() => setDec(m.key, null)}>change</button></>
-                  : canPlan && <><button className="btn btn-sm" onClick={() => setDec(m.key, "approve")}>✓ Approve</button><button className="tog" onClick={() => setDec(m.key, "skip")}>skip</button></>}</div>
-              </div>
-            </div>
+            <MoveCard key={m.key} n={tasks.length + k + 1} m={m} decision={dec[m.key]} canPlan={canPlan} open={!!openK[m.key]}
+              onToggle={() => toggle(m.key)} onDecide={(d) => setDec(m.key, d)}
+              onDonor={(d) => { setDonor(m.key, d); setDec(m.key, null); }} />
           ))}
           <NextBar note={open ? `${open} still to decide.` : "Everything is decided."} label="Next: decide →" onNext={() => go(3)} />
         </section>
@@ -350,8 +353,9 @@ const NextBar = ({ note, label, onNext }: { note: ReactNode; label: string; onNe
 );
 
 /** One impact: the planner's recommendation and why, then Keep / Accept, other options, fixes, or a pick of your own. */
-function TaskCard({ n, t, plan, decision, canPlan, busy, onDecide, onChosen, onFix }: { n: number; t: Task; plan: PlanView | undefined;
-  decision: Decision | undefined; canPlan: boolean; busy: boolean; onDecide: (d: Decision | null) => void; onChosen: () => void; onFix: (f: Fix) => void }) {
+function TaskCard({ n, t, plan, decision, canPlan, busy, open, onToggle, onDecide, onChosen, onFix }: { n: number; t: Task; plan: PlanView | undefined;
+  decision: Decision | undefined; canPlan: boolean; busy: boolean; open: boolean; onToggle: () => void; onDecide: (d: Decision | null) => void;
+  onChosen: () => void; onFix: (f: Fix) => void }) {
   const [more, setMore] = useState(false);
   const it = t.mission_id ? plan?.items.find((i) => i.mission.id === t.mission_id) : undefined;
   const why = whyText(it);
@@ -359,12 +363,15 @@ function TaskCard({ n, t, plan, decision, canPlan, busy, onDecide, onChosen, onF
   const [wt, air] = whenText(t.when);
   const word: Record<Decision, string> = { keep: "✓ Kept", choice: "✓ Your choice", accept: "✓ Accepted: not flown", fix: "✓ Fix applied", approve: "✓ Approve", skip: "Skipped" };
   return (
-    <div className={`tk${decision ? " decided" : ""}`}>
-      <div className="tk-top"><span className="num">{n}</span>
-        <div className="prob">{t.what}{t.sub && <small>{t.sub}</small>}{t.blocked && <span className="blocked">Why it can't stay as it was: {t.blocked}.</span>}</div>
-        <span className={`fl-pill ${uncovered ? "crit" : t.status === "in" ? "ok" : t.status === "waiting" ? "dim" : "warn"}`}>
-          {uncovered ? "not covered" : t.status === "in" ? "in the plan" : t.status === "waiting" ? "planning…" : "proposed"}</span></div>
-      <div className="tk-ans"><span />
+    <div className={`tk${decision ? " decided" : ""}${open ? " open" : ""}`}>
+      <div className="tk-top click" role="button" tabIndex={0} aria-expanded={open} onClick={onToggle} onKeyDown={onActivate(onToggle)}>
+        <span className="num">{n}</span>
+        <div className="prob">{t.what}{t.sub && <small>{t.sub}</small>}{open && t.blocked && <span className="blocked">Why it can't stay as it was: {t.blocked}.</span>}
+          {!open && <small className="sum">{decision ? word[decision] : uncovered ? "Planner's answer" : "Planner suggests"}: {decision === "accept" ? "not flown" : t.rec}</small>}</div>
+        <span className="tk-right"><span className={`fl-pill ${uncovered ? "crit" : t.status === "in" ? "ok" : t.status === "waiting" ? "dim" : "warn"}`}>
+          {uncovered ? "not covered" : t.status === "in" ? "in the plan" : t.status === "waiting" ? "planning…" : "proposed"}</span>
+          <span className="chev" aria-hidden>{open ? "▾" : "▸"}</span></span></div>
+      {open && <><div className="tk-ans"><span />
         <div><div className="lbl">{decision === "choice" ? "Your choice" : uncovered ? "Planner's answer" : "Planner's recommendation"}</div>
           <div className="pick">{t.rec}{!uncovered && t.when && <span className={`mono${air ? " s-info" : " dim"}`} style={{ fontSize: 12 }}> · {wt}</span>}</div>
           {why && <div className="why">Why: {why}</div>}
@@ -376,6 +383,49 @@ function TaskCard({ n, t, plan, decision, canPlan, busy, onDecide, onChosen, onF
         </div>
       </div>
       {more && t.mission_id && <Options missionId={t.mission_id} fix={t.fix ?? null} busy={busy} onFix={onFix} onChosen={() => { setMore(false); onChosen(); }} />}
+      </>}
+    </div>
+  );
+}
+
+/** A stock move (D56): the planner's donor, approve or skip, and other bases that could send it instead (D63). */
+function MoveCard({ n, m, decision, canPlan, open, onToggle, onDecide, onDonor }: { n: number; m: TransferMove & { planner_from?: TransferMove["from_base"] };
+  decision: Decision | undefined; canPlan: boolean; open: boolean; onToggle: () => void; onDecide: (d: Decision | null) => void;
+  onDonor: (d: DonorOption | null) => void }) {
+  const [more, setMore] = useState(false);
+  const mine = !!m.planner_from;
+  const alts = (m.alternatives ?? []).filter((a) => a.from_base.id !== m.from_base.id);
+  return (
+    <div className={`tk${decision ? " decided" : ""}${open ? " open" : ""}`}>
+      <div className="tk-top click" role="button" tabIndex={0} aria-expanded={open} onClick={onToggle} onKeyDown={onActivate(onToggle)}>
+        <span className="num">{n}</span>
+        <div className="prob">{m.reason}<small>needed {m.needed_by ? hh(m.needed_by) : "to restock"}</small>
+          {!open && <small className="sum">{decision === "approve" ? "✓ Approve" : decision === "skip" ? "Skipped" : mine ? "Your donor" : "Planner suggests"}:
+            {" "}{qtyText(m)} from {m.from_base.name}</small>}</div>
+        <span className="tk-right"><span className="fl-pill warn">stock move</span><span className="chev" aria-hidden>{open ? "▾" : "▸"}</span></span></div>
+      {open && <>
+        <div className="tk-ans"><span />
+          <div><div className="lbl">{mine ? "Your choice of donor" : "Planner's recommendation"}</div>
+            <div className="pick">Move {qtyText(m)} from <b>{m.from_base.name}</b> to {m.to_base.name} ({m.distance_km} km)</div>
+            <div className="why">{mine ? `The planner suggested ${m.planner_from!.name}` : "Nearest base with spare stock above its own reserve"} · arrives {hh(m.eta)}
+              {m.late ? <span className="s-caution"> (after it is needed)</span> : null}</div></div>
+          <div className="tk-act">{decision ? <><span className={decision === "approve" ? "s-ok" : "dim"}>{decision === "approve" ? "✓ Approve" : "Skip"}</span>
+              <button className="tog" onClick={() => onDecide(null)}>change</button></>
+            : canPlan && <><button className="btn btn-sm" onClick={() => onDecide("approve")}>✓ Approve</button><button className="tog" onClick={() => onDecide("skip")}>skip</button></>}
+            {canPlan && (alts.length > 0 || mine) && <button className="tog" onClick={() => setMore(!more)}>Other donors ▾</button>}</div>
+        </div>
+        {more && <div className="tk-opts">
+          {mine && <div className="opt-row"><span>Back to the planner's donor, <b>{m.planner_from!.name}</b></span>
+            <button className="btn btn-sm" onClick={() => { onDonor(null); setMore(false); }}>Use the planner's</button></div>}
+          {alts.length > 0 && <div className="opt-h">Other bases that can spare it <span className="dim">nearest first</span></div>}
+          {alts.map((a) => (
+            <div key={a.from_base.id} className="opt-row"><span>From <b>{a.from_base.name}</b> · {a.distance_km} km by road · arrives {hh(a.eta)}
+              {a.late && <span className="s-caution"> (after it is needed)</span>}
+              <span className="dim"> · spare {m.kind === "FUEL" ? `${Math.round(a.spare / 1000)} kL` : Math.round(a.spare)}</span></span>
+              <button className="btn btn-sm" onClick={() => { onDonor(a); setMore(false); }}>Use this donor</button></div>))}
+          {alts.length === 0 && !mine && <div className="dim">No other base within reach can spare it.</div>}
+        </div>}
+      </>}
     </div>
   );
 }
@@ -386,6 +436,7 @@ function Options({ missionId, fix, busy, onFix, onChosen }: { missionId: number;
   const q = useQuery({ queryKey: ["plan-options", missionId], queryFn: () => api<MissionOptions>(`/ops/plans/options?mission_id=${missionId}`) });
   const [pick, setPick] = useState("");
   const [time, setTime] = useState("");
+  const [all, setAll] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const choose = useMutation({
     mutationFn: (b: { base_id: number; type_id: number; on_station?: string }) =>
@@ -404,12 +455,23 @@ function Options({ missionId, fix, busy, onFix, onChosen }: { missionId: number;
   return (
     <div className="tk-opts">
       {fix && <div className="opt-row"><span>Suggested fix: {fix.text}</span><button className="btn btn-sm btn-primary" disabled={busy} onClick={() => onFix(fix)}>Apply fix</button></div>}
-      {o.alternatives.length > 0 && <div className="opt-h">The planner's other options</div>}
-      {o.alternatives.map((a) => (
-        <div key={`${a.base_id}-${a.type_id}`} className="opt-row"><span>{a.n ? `${a.n} × ` : ""}{a.type} from <b>{a.base_name ?? a.base}</b>, launch {hh(a.launch)}{" "}
-          <span className="dim">· {a.transit_min != null ? `${a.transit_min} min to station (${(a.d_transit_min ?? 0) >= 0 ? "+" : ""}${a.d_transit_min ?? 0}) · fuel ${(a.d_fuel_l ?? 0) >= 0 ? "+" : ""}${((a.d_fuel_l ?? 0) / 1000).toFixed(1)} kL · route risk ${(a.risk ?? 0) < 0.2 ? "low" : (a.risk ?? 0) < 0.5 ? "medium" : "high"}` : a.why_not}</span></span>
-          <button className="btn btn-sm" disabled={choose.isPending} onClick={() => choose.mutate({ base_id: a.base_id, type_id: a.type_id })}>Use this instead</button></div>
-      ))}
+      {o.alternatives.length > 0 && <div className="opt-h">The planner's other options ({o.alternatives.length}) <span className="dim">· best first ·
+        ✓ tails and crew free now, ▲ check needed</span></div>}
+      {(all ? o.alternatives : o.alternatives.slice(0, 5)).map((a) => {
+        const sign = (v: number | null | undefined) => (v == null ? "" : ` (${v >= 0 ? "+" : ""}${v})`);
+        return (
+          <div key={`${a.base_id}-${a.type_id}-${a.launch}`} className="opt-row"><span>
+            <span className={a.fits === false ? "s-caution" : "s-ok"} aria-label={a.fits === false ? "may not fit" : "fits"}>{a.fits === false ? "▲" : "✓"}</span>{" "}
+            {a.n ? `${a.n} × ` : ""}{a.type} from <b>{a.base_name ?? a.base}</b>, launch {hh(a.launch)}{a.on_station ? ` · on station ${hh(a.on_station)}` : ""}
+            {a.tanker && <span className="chip">+ tanker</span>}{(a.waves ?? 1) > 1 && <span className="chip">{a.waves} waves</span>}{a.night && <span className="chip">night</span>}
+            <span className="dim"> · {a.transit_min != null ? `${a.transit_min} min to station${sign(a.d_transit_min)}` : ""}
+              {a.d_fuel_l != null ? ` · fuel ${a.d_fuel_l >= 0 ? "+" : ""}${(a.d_fuel_l / 1000).toFixed(1)} kL` : ""}
+              {a.risk != null ? ` · route risk ${a.risk < 0.2 ? "low" : a.risk < 0.5 ? "medium" : "high"}` : ""}
+              {a.why_not ? ` · ${a.fits === false ? "tails / crew: " : ""}${a.why_not}` : ""}</span></span>
+            <button className="btn btn-sm" disabled={choose.isPending} onClick={() => choose.mutate({ base_id: a.base_id, type_id: a.type_id, on_station: a.on_station })}>
+              Use this instead</button></div>);
+      })}
+      {o.alternatives.length > 5 && <button className="tog" onClick={() => setAll(!all)}>{all ? "Show fewer" : `Show all ${o.alternatives.length} options`}</button>}
       <div className="opt-h">Or choose yourself <span className="dim">(window {hh(o.mission.window_start)}–{hh(o.mission.window_end)}, {o.mission.required} aircraft, {o.mission.on_station_min} min on station)</span></div>
       <div className="opt-row mine">
         <select className="select" aria-label="Base and aircraft" value={pick} onChange={(e) => setPick(e.target.value)}>
@@ -503,7 +565,7 @@ function Guide({ canPlan, onPlan, busy }: { canPlan: boolean; onPlan: () => void
       <p className="muted">Start a scenario and the planner answers it at once: the missions it demands, a plan for them alongside routine
         tasking, what that breaks, and what it needs from which base, including fuel, weapons and spares to move between bases.</p>
       <ol>
-        <li><span className="n">1</span><div><b>Start a scenario</b><div className="muted">Pick one of the eight, or several. This page updates by itself.</div>
+        <li><span className="n">1</span><div><b>Start a scenario</b><div className="muted">Pick one or several. This page updates by itself.</div>
           {canPlan ? <Link className="btn btn-sm btn-primary" to="/scenarios">Open Scenarios</Link> : <div className="muted">Air HQ or the directing staff start scenarios.</div>}</div></li>
         <li><span className="n">2</span><div><b>Or plan routine tasking first</b><div className="muted">The day's routine missions, without any incident.</div>
           {canPlan && <button className="btn btn-sm" disabled={busy} onClick={onPlan}>{busy ? "Planning…" : "Plan routine tasking"}</button>}</div></li>

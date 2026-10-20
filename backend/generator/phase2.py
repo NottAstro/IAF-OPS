@@ -329,15 +329,16 @@ def generate(conn, W, t0: datetime, G, cmd_id: dict, own: dict, types: dict) -> 
                                 "source", "fetched_at", "is_simulated"], wx)
 
     # ------------------------------------------------------------------ scenarios (D55): one incident each, eight categories
-    def toward(code, km):
-        """A point km in from the de facto border on the line to a western base: a generic threat area for that sector."""
-        b, pts = own.get(code), border_by_cmd.get("WAC") or []
+    def toward(code, km, cmd="WAC"):
+        """A point km in from the de facto border on the line to a base: a generic threat area for that sector."""
+        b, pts = own.get(code), border_by_cmd.get(cmd) or []
         if not b or not pts:
             return None
         bp = min(pts, key=lambda q: dist_km(q, (b["_lon"], b["_lat"])))
         c = offset(*bp, km, bearing(bp, (b["_lon"], b["_lat"])))
         return c if G.ok(*c) else None
     west = toward("VIAX", 55) or (75.3, 31.6)
+    east = toward("VETZ", 60, "EAC") or (92.6, 27.4)
     base = lambda key, label, d: dict(key=key, label=label, kind="base", default=d)                       # noqa: E731
     choice = lambda key, label, opts, d, unit="": dict(key=key, label=label, kind="choice", options=opts, default=d,  # noqa: E731
                                                        unit=unit)
@@ -440,6 +441,132 @@ def generate(conn, W, t0: datetime, G, cmd_id: dict, own: dict, types: dict) -> 
                            "near_base": "{base}", "offset_km": 50, "bearing": 135, "window_h": 6, "place": "the western sector"}),
                       dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "RECCE_ISR", "priority": "P2",
                            "target_base": "{base}", "window_h": 4})]),
+        # ---- more situations (D63): natural disasters, the eastern sector, weather, logistics and accidents
+        dict(code="cyclone-landfall", name="Cyclone landfall on the east coast", category="WEATHER", intensity="HIGH",
+             summary="Coastal bases below minima; flood relief and rescue",
+             description="A severe cyclone crosses the Odisha–Bengal coast. Coastal bases are below flying minima while it passes, "
+                         "and villages behind the coast need rescue and relief stores.",
+             lead="A cyclone is crossing the coast near {bases_name}. Flying is below minima there for {hours} h; flooded "
+                  "villages need rescue and relief stores.",
+             params=[dict(key="bases", label="Bases in its path", kind="bases", default=["VEDX", "VEPI"]),
+                     choice("cat", "Conditions", ["MVFR", "IFR", "LIFR"], "IFR"), choice("hours", "Lasts", [6, 8, 12, 18], 12, "h"),
+                     hidden("required", 2)],
+             presets={"LOW": {"cat": "MVFR", "hours": 6, "required": 1}, "MEDIUM": {"cat": "IFR", "hours": 8, "required": 2},
+                      "HIGH": {"cat": "IFR", "hours": 12, "required": 2}, "SEVERE": {"cat": "LIFR", "hours": 18, "required": 2}},
+             injects=[dict(offset_min=0, kind="WX_FRONT", params={"bases": "{bases}", "cat": "{cat}", "hours": "{hours}"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "HADR", "priority": "P1", "near_base": "VEPH",
+                           "offset_km": 70, "bearing": 170, "window_h": 10, "required": "{required}",
+                           "place": "flooded villages behind the coast"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "CASEVAC", "priority": "P1", "near_base": "VEPH",
+                           "offset_km": 90, "bearing": 150, "window_h": 8, "place": "a cut-off coastal village"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "AIRLIFT", "priority": "P2", "target_base": "VEPH",
+                           "window_h": 12, "required": 1, "place": "Panagarh (relief stores)"})]),
+        dict(code="himalayan-earthquake", name="Earthquake in the central Himalaya", category="URGENT_TASKING", intensity="HIGH",
+             summary="Rescue, casualty evacuation and relief airlift",
+             description="A strong earthquake hits hill towns in the central Himalaya. Roads are blocked by landslides; casualties "
+                         "need evacuation and the area needs rescue teams and stores.",
+             lead="A strong earthquake hit hill towns north of {base_name}. Roads are cut; {casualties} casualties need "
+                  "evacuation within {window_h} h and rescue teams must be flown in.",
+             params=[base("base", "Nearest base", "VIBY"), choice("casualties", "Casualties", [5, 20, 50], 20),
+                     choice("window_h", "Evacuate within", [3, 4, 6], 4, "h"), hidden("required", 2)],
+             presets={"LOW": {"casualties": 5, "window_h": 6, "required": 1}, "MEDIUM": {"casualties": 20, "window_h": 4, "required": 2},
+                      "HIGH": {"casualties": 20, "window_h": 4, "required": 2}, "SEVERE": {"casualties": 50, "window_h": 3, "required": 3}},
+             injects=[dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "CASEVAC", "priority": "P1",
+                           "near_base": "{base}", "offset_km": 140, "bearing": 340, "window_h": "{window_h}",
+                           "required": "{required}", "place": "the earthquake zone"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "HADR", "priority": "P1",
+                           "near_base": "{base}", "offset_km": 130, "bearing": 350, "window_h": 8, "required": 2,
+                           "place": "the earthquake zone (rescue teams)"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "AIRLIFT", "priority": "P2",
+                           "target_base": "{base}", "window_h": 10, "required": 1, "place": "relief stores"})]),
+        dict(code="eastern-intrusion", name="Airspace violation in the eastern sector", category="HOSTILE_ACTION", intensity="HIGH",
+             summary="Threat zone in the east; CAP, ISR and AEW&C cover",
+             description="Unknown aircraft are reported along the eastern sector. A threat zone is declared and the sector needs "
+                         "air defence patrols, surveillance and an AEW&C picture.",
+             lead="Unknown aircraft were reported in the eastern sector near {base_name}. A threat zone is up for {hours} h; the "
+                  "sector needs patrols, surveillance and AEW&C cover.",
+             params=[base("base", "Sector base", "VETZ"), choice("hours", "Threat lasts", [4, 6, 12], 6, "h"), hidden("risk", 0.7)],
+             presets={"LOW": {"hours": 4, "risk": 0.5}, "MEDIUM": {"hours": 6, "risk": 0.6}, "HIGH": {"hours": 6, "risk": 0.7},
+                      "SEVERE": {"hours": 12, "risk": 0.85}},
+             injects=[dict(offset_min=0, kind="THREAT_ZONE", params={"lon": round(east[0], 4), "lat": round(east[1], 4),
+                           "radius_km": 30, "risk": "{risk}", "hours": "{hours}",
+                           "name": "Unknown air activity, eastern sector (exercise)"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "AIR_DEFENCE_PATROL", "priority": "P1",
+                           "near_base": "{base}", "offset_km": 45, "bearing": 0, "window_h": 4, "max_risk": "HIGH",
+                           "place": "the eastern sector"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "RECCE_ISR", "priority": "P1",
+                           "near_base": "{base}", "offset_km": 55, "bearing": 15, "window_h": 5, "place": "the eastern sector"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "AEW_SUPPORT", "priority": "P2",
+                           "near_base": "{base}", "offset_km": 10, "bearing": 200, "window_h": 6, "place": "the eastern sector"})]),
+        dict(code="desert-dust-storm", name="Dust storm over the western desert", category="WEATHER", intensity="MEDIUM",
+             summary="Desert bases below minima for hours",
+             description="A dust storm sweeps across the Thar. Visibility at the desert bases drops below safe flying minima.",
+             lead="A dust storm put {bases_name} below safe flying minima for {hours} h.",
+             params=[dict(key="bases", label="Bases", kind="bases", default=["VIJO", "VIUT", "VIJR", "VIBK"]),
+                     choice("cat", "Visibility", ["MVFR", "IFR", "LIFR"], "IFR"), choice("hours", "Lasts", [3, 6, 9], 6, "h")],
+             presets={"LOW": {"cat": "MVFR", "hours": 3}, "MEDIUM": {"cat": "IFR", "hours": 6}, "HIGH": {"cat": "IFR", "hours": 9},
+                      "SEVERE": {"cat": "LIFR", "hours": 9}},
+             injects=[dict(offset_min=0, kind="WX_FRONT", params={"bases": "{bases}", "cat": "{cat}", "hours": "{hours}"})]),
+        dict(code="winter-fog", name="Dense fog over the northern plains", category="WEATHER", intensity="MEDIUM",
+             summary="Northern bases fogged in at dawn",
+             description="Dense winter fog settles over the Indo-Gangetic plain. The northern bases are below minima until it lifts.",
+             lead="Dense fog put {bases_name} below minima for {hours} h.",
+             params=[dict(key="bases", label="Bases", kind="bases", default=["VIDX", "VIDP", "VIAG", "VIBY", "VIAM"]),
+                     choice("cat", "Visibility", ["IFR", "LIFR"], "LIFR"), choice("hours", "Lifts after", [3, 5, 8], 5, "h")],
+             presets={"LOW": {"cat": "IFR", "hours": 3}, "MEDIUM": {"cat": "LIFR", "hours": 5}, "HIGH": {"cat": "LIFR", "hours": 8},
+                      "SEVERE": {"cat": "LIFR", "hours": 8}},
+             injects=[dict(offset_min=0, kind="WX_FRONT", params={"bases": "{bases}", "cat": "{cat}", "hours": "{hours}"})]),
+        dict(code="spares-shortage", name="Helicopter spares shortage", category="LOGISTICS", intensity="MEDIUM",
+             summary="Mi-17V-5s on the ground awaiting spares",
+             description="A batch of rotor and engine spares is held up. Part of the Mi-17V-5 fleet waits on the ground until "
+                         "spares are moved in from other bases.",
+             lead="{count} Mi-17V-5 at {bases_name} are on the ground awaiting spares for {hours} h.",
+             params=[dict(key="bases", label="Bases", kind="bases", default=["VEMN", "VEBD", "VEPI"]),
+                     choice("count", "Helicopters waiting", [4, 8, 12], 8), choice("hours", "Spares in", [24, 48, 72], 48, "h"),
+                     hidden("type", "Mi-17V-5")],
+             presets={"LOW": {"count": 4, "hours": 24}, "MEDIUM": {"count": 8, "hours": 48}, "HIGH": {"count": 12, "hours": 48},
+                      "SEVERE": {"count": 12, "hours": 72}},
+             injects=[dict(offset_min=0, kind="AIRCRAFT_GROUNDING", params={"type": "{type}", "bases": "{bases}", "count": "{count}",
+                                                                            "hours": "{hours}"})]),
+        dict(code="bird-strike", name="Bird strike on take-off at Jodhpur", category="ACCIDENT", intensity="LOW",
+             summary="1 Su-30MKI lost, runway swept 2 h",
+             description="A Su-30MKI takes a bird strike on take-off and the pilot ejects. The runway is closed while it is swept.",
+             lead="A {type} hit birds on take-off at {base_name}; the pilot ejected. The runway is closed for {hours} h while it "
+                  "is swept.",
+             params=[base("base", "Base", "VIJO"), dict(key="type", label="Aircraft type", kind="type", default="Su-30MKI"),
+                     choice("hours", "Runway closed for", [1, 2, 4], 2, "h")],
+             presets={"LOW": {"hours": 1}, "MEDIUM": {"hours": 2}, "HIGH": {"hours": 4}, "SEVERE": {"hours": 4}},
+             injects=[dict(offset_min=0, kind="AIRCRAFT_LOST", params={"base": "{base}", "type": "{type}", "count": 1}),
+                      dict(offset_min=0, kind="RUNWAY_CLOSED", params={"base": "{base}", "hours": "{hours}"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "CASEVAC", "priority": "P1",
+                           "near_base": "{base}", "offset_km": 9, "bearing": 60, "window_h": 3, "place": "the ejection site"})]),
+        dict(code="rail-accident", name="Rail accident with mass casualties", category="URGENT_TASKING", intensity="HIGH",
+             summary="Casualty evacuation and medical teams airlifted",
+             description="A passenger train derails far from a city. The injured need flying to hospital and medical teams "
+                         "need flying in.",
+             lead="A passenger train derailed near {base_name}. {casualties} injured need hospital within {window_h} h; medical "
+                  "teams are being flown in.",
+             params=[base("base", "Nearest base", "VEGK"), choice("casualties", "Injured", [10, 40, 100], 40),
+                     choice("window_h", "Within", [2, 3, 4], 3, "h"), hidden("required", 2)],
+             presets={"LOW": {"casualties": 10, "window_h": 4, "required": 1}, "MEDIUM": {"casualties": 40, "window_h": 3, "required": 2},
+                      "HIGH": {"casualties": 40, "window_h": 3, "required": 2}, "SEVERE": {"casualties": 100, "window_h": 2, "required": 3}},
+             injects=[dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "CASEVAC", "priority": "P1",
+                           "near_base": "{base}", "offset_km": 60, "bearing": 120, "window_h": "{window_h}",
+                           "required": "{required}", "place": "the derailment site"}),
+                      dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "AIRLIFT", "priority": "P2",
+                           "target_base": "{base}", "window_h": 6, "required": 1, "place": "medical teams"})]),
+        dict(code="forest-fire", name="Forest fire in the Kumaon hills", category="URGENT_TASKING", intensity="MEDIUM",
+             summary="Helicopters with water buckets over the fire",
+             description="A large forest fire spreads through the Kumaon hills. Helicopters with water buckets are needed until "
+                         "ground crews contain it.",
+             lead="A forest fire is spreading in the hills north of {base_name}. Helicopters with water buckets are needed for "
+                  "the next {window_h} h.",
+             params=[base("base", "Nearest base", "VIBY"), choice("window_h", "Needed for", [4, 8, 12], 8, "h"), hidden("required", 2)],
+             presets={"LOW": {"window_h": 4, "required": 1}, "MEDIUM": {"window_h": 8, "required": 2},
+                      "HIGH": {"window_h": 8, "required": 2}, "SEVERE": {"window_h": 12, "required": 3}},
+             injects=[dict(offset_min=0, kind="MISSION_POPUP", params={"mission_type": "HADR", "priority": "P2",
+                           "near_base": "{base}", "offset_km": 110, "bearing": 10, "window_h": "{window_h}",
+                           "required": "{required}", "place": "the forest fire"})]),
     ]
     W.insert("scenario", [dict(id=W.next_id("scenario"), code=s["code"], name=s["name"], category=s["category"],
                                intensity=s["intensity"], summary=s["summary"], description=s["description"], lead=s["lead"],

@@ -126,7 +126,8 @@ def assess(db: Session, run: M.ExerciseRun, before: S.OpsState) -> dict:
             code, why = ("RUNWAY_CLOSED", shut) if shut else _why_not_here(after, mid, b["base_id"], b["aircraft_type_id"])
             if here or code != "CAPACITY_CONFLICT":
                 changes.append({**row, "kind": "dropped", "before": _pkg(before, b), "reason_code": code,
-                                "reason": _unmet_text(UA.get(mid)) or why, "blocked": why})
+                                # a closed runway is the cause: say so, not the planner's general reason for leaving it out
+                                "reason": why if shut else (_unmet_text(UA.get(mid)) or why), "blocked": why})
             else:
                 knock += 1
             continue
@@ -238,7 +239,7 @@ def brief(run: M.ExerciseRun, a: dict) -> list[str]:
     out.append("Cost to the plan: " + ", ".join(cost) + ".")
     if ends:
         last, now = datetime.fromisoformat(max(ends)), datetime.fromisoformat(a["assessed_at"])
-        when = f"{last:%H:%M}" + ("" if last.date() == now.date() else f" on {last:%-d %b}")
+        when = f"{last:%H:%M}" + ("" if last.date() == now.date() else f" on {last.day} {last:%b}")   # %-d isn't portable (Windows)
         out.append(f"The effects last until {when}." if last > now else f"The effects ended at {when}.")
     return out
 

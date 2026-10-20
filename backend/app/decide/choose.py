@@ -51,13 +51,7 @@ def options(db: Session, mission_id: int) -> dict:
     m = st.missions.get(mission_id)
     if m is None:
         raise PlanError(409, "This mission's window has passed or it is no longer open for planning.")
-    ids = {r.code: r.id for r in db.execute(text("SELECT id, code FROM base"))}
-    tids = {r.name: r.id for r in db.execute(text("SELECT id, name FROM aircraft_type"))}
-    alts = []
-    for a in (mine[0]["alternatives"] or []) if mine else []:
-        code = a["base"].split()[0]
-        if code in ids and a["type"] in tids:
-            alts.append({**a, "base_id": ids[code], "type_id": tids[a["type"]]})
+    alts = alternatives(st, p, m, mine, [r for r in rows if r["mission_id"] != mission_id])
     held = {}
     for (b, t), tails in st.by_base_type.items():
         n = sum(1 for i in tails if st.aircraft[i].status != "QRA")
@@ -72,6 +66,49 @@ def options(db: Session, mission_id: int) -> dict:
             "current": {"item_id": mine[0]["id"], "base_id": mine[0]["base_id"], "type_id": mine[0]["aircraft_type_id"],
                         "launch": mine[0]["launch_ts"]} if mine else None,
             "alternatives": alts, "manual": manual}
+
+
+def alternatives(st: S.OpsState, p: M.Plan, m, mine: list[dict], others: list[dict], limit: int = D.MAX_ALTERNATIVES) -> list[dict]:
+    """Every workable option for the mission (D63), not just the few stored with the package: up to three launch times per
+    base and type from the planner's own feasibility, each pre-checked for free tails and crew around the rest of the
+    plan, with the trade-off against the current pick. "Use this instead" then runs the full check (choose)."""
+    cands, _ = F.generate(st, p.preset if p.preset in D.PRESETS else "BALANCED", {m.id})
+    cs = sorted(cands.get(m.id, []), key=lambda c: (c.cost, c.idx))
+    cur = mine[0] if mine else None
+    sc = (cur or {}).get("score") or {}
+    base_cost, parts = sc.get("cost"), sc.get("parts") or {}
+    cur_transit = round((cur["on_station_ts"] - cur["launch_ts"]).total_seconds() / 60) \
+        if cur and cur.get("on_station_ts") else None               # launch to on station, as for the options below
+    led = Ledger()
+    for k, r in enumerate(others):
+        led.take(P.cand_from_row(st, r, -1 - k), P.assignment_from_row(r))
+    out = []
+    for c in cs:
+        if cur and c.base_id == cur["base_id"] and c.type_id == cur["aircraft_type_id"] \
+                and abs((c.launch - cur["launch_ts"]).total_seconds()) < 300:
+            continue                                  # that is the current pick
+        a = assign(st, c, led)
+        fits, why = not isinstance(a, str), a if isinstance(a, str) else ""
+        if fits and c.support is not None:            # the tanker must be crewable too
+            led.take(c, a)
+            s = assign(st, c.support, led)
+            led.release(c, a)
+            if isinstance(s, str):
+                fits, why = False, f"tanker: {s}"
+        worse = sorted(((c.cost_parts.get(k, 0) - parts.get(k, 0), k) for k in X.PART_LABEL), reverse=True)
+        better = sorted(((parts.get(k, 0) - c.cost_parts.get(k, 0), k) for k in X.PART_LABEL), reverse=True)
+        trade = [f"{X.PART_LABEL[k]} worse" for d, k in worse[:2] if d > 0.5] + [f"{X.PART_LABEL[k]} better" for d, k in better[:1] if d > 0.5]
+        out.append({"base_id": c.base_id, "type_id": c.type_id, "base": st.bases[c.base_id].code,
+                    "base_name": st.bases[c.base_id].name.replace("Air Force Station ", ""), "type": st.types[c.type_id].name,
+                    "n": c.n, "launch": c.launch.isoformat(), "on_station": c.on_station.isoformat(), "recovery": c.recovery.isoformat(),
+                    "transit_min": round((c.on_station - c.launch).total_seconds() / 60),
+                    "d_transit_min": round((c.on_station - c.launch).total_seconds() / 60) - cur_transit if cur_transit is not None else None,
+                    "d_fuel_l": round(c.fuel_l - float(cur["fuel_l"] or 0)) if cur else None, "fuel_l": round(c.fuel_l),
+                    "risk": round(c.risk_peak, 2), "cost_delta": round(c.cost - base_cost, 1) if base_cost is not None else None,
+                    "tanker": c.support is not None, "night": c.night, "waves": c.waves,
+                    "fits": fits, "why_not": why or ", ".join(trade) or "similar cost"})
+    out.sort(key=lambda o: (not o["fits"], o["cost_delta"] if o["cost_delta"] is not None else 0))
+    return out[:limit]
 
 
 def choose(db: Session, user: dict, mission_id: int, base_id: int, type_id: int, on_station: datetime | None = None,

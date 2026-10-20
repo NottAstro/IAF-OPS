@@ -1,6 +1,7 @@
 /* Single source of design tokens — navy + neon blue theme (docs/DESIGN_SYSTEM.md §3, revised 2026-10-16).
    Map style colours are read from here by map/colors.ts. Contrast: text ≥ 4.5:1, controls ≥ 3:1 on all surfaces. */
 :root {
+  color-scheme: dark;         /* native controls (time/date pickers, scrollbars) draw for a dark page */
   --bg: #050b16;
   --surface-1: #0a1528;
   --surface-2: #0f1e37;

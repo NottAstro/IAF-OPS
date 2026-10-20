@@ -19,7 +19,8 @@ from . import exercise as EX
 from . import logistics as LG
 from . import snapshot as S
 from . import store
-from .optimiser import launch_capacity, slot_of
+from . import feasibility as F
+from .optimiser import aircraft_capacity, crew_capacity, launch_capacity, slot_of
 from .resources import Req, aircraft_free, crew_eligible, crew_free
 
 FIRST = {"AIRCRAFT_LOST": "Crash", "RUNWAY_CLOSED": "Runway closed", "MISSION_POPUP": "Call for help", "WX_FRONT": "Front arrives",
@@ -330,8 +331,9 @@ def _ts(v) -> datetime:
 
 
 # ---------------------------------------------------------------- requirements
-def requirements(db: Session, items: dict, run: M.ExerciseRun) -> list[dict]:
-    if not items and not (run.footprint or {}).get("effects"):
+def requirements(db: Session, items: dict, run: M.ExerciseRun | None) -> list[dict]:
+    fp = (run.footprint or {}) if run is not None else {}
+    if not items and not fp.get("effects"):
         return []
     st = snapshot(db)
     out, fuel = [], {}
@@ -390,7 +392,7 @@ def requirements(db: Session, items: dict, run: M.ExerciseRun) -> list[dict]:
             out.append({"label": f"Fuel at {f['name']}", "need": f"{f['l'] / 1000:.1f} kL", "from": f["name"],
                         "have": f"{fb['current_l'] / 1000:.0f} kL in stock, reserve {fb['reserve_l'] / 1000:.0f}",
                         "when": None, "status": f["state"], "q": [f["l"], max(fb["current_l"], 1.0)]})
-    for e in (run.footprint or {}).get("effects", []):
+    for e in fp.get("effects", []):
         if e["kind"] == "RUNWAY_CLOSED" and e.get("until") and _ts(e["until"]) > _now(db):
             out.append({"label": f"{e['base_name']} runway open again", "need": "repair", "from": e["base_name"],
                         "have": "closed", "when": {"kind": "at", "a": e["until"]}, "status": "wait", "q": None})
@@ -521,6 +523,12 @@ def situation(db: Session, run_id: int | None = None) -> dict:
                 if k not in seen:
                     seen.add(k)
                     reqs.append({**q, "scenario": r["name"], "run_id": r["id"]})   # the All view groups them by scenario
+        # D64: routine tasking needs resources too: its changed packages, and what each uncovered mission would take
+        changed = {it["mission"]["id"]: (it, "proposed" if pending is not None else "in") for it in view["items"]
+                   if it["mission"] and tag.get(it["mission"]["id"], (None,))[0] is None and it["change"] and it["change"] != "KEPT"}
+        uncovered = [x["mission_id"] for x in impacts if x.get("scenario") == "Routine" and x["status"] in ("uncovered", "apply")
+                     and x.get("mission_id")]
+        reqs += [{**q, "scenario": "Routine", "run_id": None} for q in routine_needs(db, plan, view, changed, uncovered)]
     moves = LG.recommend(db, snapshot(db), plan.id if plan is not None else None, scenario_bases(db, plan)) \
         if plan is not None or runs else {"moves": [], "unmet": []}
     transit = [dict(x) for x in db.execute(text("""SELECT t.id, t.kind, t.category, t.qty, t.unit, t.status, t.eta, t.distance_km,
@@ -562,8 +570,81 @@ def situation(db: Session, run_id: int | None = None) -> dict:
             "timeline": one["timeline"] if one else [], "state": one["state"] if one else ("decision" if pending else "live"),
             "missions": rows, "routine_unchanged": routine_same, "impacts": impacts,
             "need": sum(1 for x in impacts if x["status"] in ("proposed", "apply")) + (1 if pending is not None else 0),
-            "requirements": reqs, "counts": {c: sum(1 for q in reqs if q["status"] == c) for c in ("met", "approve", "wait")},
+            "requirements": reqs, "counts": {c: sum(1 for q in reqs if q["status"] == c) for c in ("met", "approve", "wait", "short")},
             "transfers": {**moves, "in_transit": transit}, "simulated": True}
+
+
+_needs_cache: dict = {}
+
+
+def routine_needs(db: Session, plan: M.Plan | None, view: dict, changed: dict, uncovered: list[int]) -> list[dict]:
+    """D64: the routine-tasking side panel. Changed routine packages need what a scenario's packages need (requirements());
+    each uncovered routine mission shows what flying it would take with the planner's best option (aircraft, qualified
+    rested pilots, launch slots, tanker, fuel), counted against what the plan under review already uses there and then,
+    so a "short" row is what blocks it. Cached per plan version and snapshot (the page polls every few seconds)."""
+    key = (plan.id if plan is not None else 0, plan.version if plan is not None else 0, _snap["t"],
+           tuple(sorted(changed)), tuple(uncovered))
+    if key in _needs_cache:
+        return _needs_cache[key]
+    out = requirements(db, changed, None)
+    st = snapshot(db)
+    # packages of the plan under review that have no sorties yet: the snapshot doesn't count them as busy
+    load = [(it["base"]["id"], it["type"]["id"], _ts(it["launch_ts"]), _ts(it["recovery_ts"]), it["n_aircraft"],
+             it.get("fuel_l") or 0.0) for it in view["items"] if it.get("base") and it.get("type") and not it.get("sortie")]
+    for mid in uncovered[:12]:
+        m = st.missions.get(mid)
+        if m is None:
+            continue
+        name = re.sub(r" \([^)]*\)", "", m.name)
+        win = {"kind": "window", "a": m.window_start.isoformat(), "b": m.window_end.isoformat()}
+        cands, rejects = F.generate(st, "BALANCED", {mid})
+        cs = sorted(cands.get(mid, []), key=lambda c: (c.cost, c.idx))
+        if not cs:
+            r = (F.summarise(rejects.get(mid, []), st, m.target) or [{}])[0]
+            out.append({"label": f"{name}: no base can fly it", "need": f"{m.required} aircraft · {m.on_station_min} min on station",
+                        "from": "any base", "have": (r.get("text") or "not feasible").lower(), "when": win, "status": "short", "q": None,
+                        "mission_id": mid})
+            continue
+        c = cs[0]
+        b, t = st.bases[c.base_id], st.types[c.type_id]
+        bname = _short(b.name)
+        over = [x for x in load if x[0] == c.base_id and x[2] < c.recovery and c.launch < x[3]]
+        used_ac = sum(x[4] for x in over if x[1] == c.type_id)
+        free_ac = max(0, aircraft_capacity(st, b.id, t.id, c.ac_iv[0]) - used_ac)
+        per = max(1, c.pilots // max(1, c.n))
+        free_p = max(0, crew_capacity(st, b.id, t.id, c.req, c.cr_iv[0]) - used_ac * per)
+        pkg = {"kind": "window", "a": c.launch.isoformat(), "b": c.recovery.isoformat()}
+        here = f" ({used_ac} in this plan)" if used_ac else ""
+        out.append({"label": f"Aircraft for {name}", "need": f"{c.n} {t.name}", "from": bname, "have": f"{free_ac} free then{here}",
+                    "when": pkg, "status": "met" if free_ac >= c.n else "short", "q": [c.n, max(free_ac, c.n)], "mission_id": mid})
+        quals = c.req.label() if hasattr(c.req, "label") else ""
+        out.append({"label": "Aircrew", "need": f"{c.pilots} pilots" + (f" ({quals})" if quals and quals != "any current" else ""),
+                    "from": bname, "have": f"{free_p} qualified, rested", "when": pkg, "status": "met" if free_p >= c.pilots else "short",
+                    "q": [c.pilots, max(free_p, c.pilots)], "mission_id": mid})
+        slot = slot_of(c.launch)
+        slots = launch_capacity(st, b.id, slot) - sum(x[4] for x in load if x[0] == c.base_id and slot_of(x[2]) == slot)
+        ok = b.runway_ok(c.launch)
+        out.append({"label": f"Runway at {bname}", "need": f"{c.n} launch{'es' if c.n > 1 else ''}", "from": bname,
+                    "have": f"{max(0, slots)} slots at {_hm(slot)}" if ok else "closed then", "when": {"kind": "at", "a": c.launch.isoformat()},
+                    "status": "met" if ok and slots >= c.n else "short" if ok else "wait", "q": [c.n, max(slots, c.n)] if ok else None,
+                    "mission_id": mid})
+        if c.support is not None:
+            s = c.support
+            tf = max(0, aircraft_capacity(st, s.base_id, s.type_id, s.ac_iv[0])
+                     - sum(x[4] for x in load if x[0] == s.base_id and x[1] == s.type_id and x[2] < s.recovery and s.launch < x[3]))
+            out.append({"label": "Tanker", "need": f"1 {st.types[s.type_id].name}", "from": _short(st.bases[s.base_id].name),
+                        "have": f"{tf} free then", "when": {"kind": "window", "a": s.launch.isoformat(), "b": s.recovery.isoformat()},
+                        "status": "met" if tf >= 1 else "short", "q": [1, max(tf, 1)], "mission_id": mid})
+        f = st.fuel.get(b.id)
+        if f:
+            avail = f["current_l"] - f["reserve_l"] - f["committed_l"] - sum(x[5] for x in load if x[0] == c.base_id)
+            out.append({"label": f"Fuel at {bname}", "need": f"{c.fuel_l / 1000:.1f} kL", "from": bname,
+                        "have": f"{max(0.0, avail) / 1000:.0f} kL above reserve", "when": None,
+                        "status": "met" if avail >= c.fuel_l else "short", "q": [c.fuel_l, max(avail, c.fuel_l, 1.0)], "mission_id": mid})
+    if len(_needs_cache) > 32:
+        _needs_cache.clear()
+    _needs_cache[key] = out
+    return out
 
 
 def invalidate_snapshot() -> None:

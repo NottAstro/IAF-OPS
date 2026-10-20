@@ -61,6 +61,9 @@ h1, h2, h3 { margin: 0; font-weight: 700; }
 .btn-sm { padding: 2px 8px; font-size: var(--t-small); }
 .input, .select { background: var(--surface-2); border: 1px solid var(--line); border-radius: 4px; padding: 6px 9px; min-width: 0; }
 .input:focus, .select:focus { border-color: var(--accent); box-shadow: var(--glow); outline: none; }
+.input::-webkit-calendar-picker-indicator { cursor: pointer; opacity: 1; padding: 2px; border-radius: 3px;
+  filter: brightness(0) invert(72%) sepia(62%) saturate(2400%) hue-rotate(163deg) brightness(104%); }   /* accent-blue clock / calendar icon */
+.input::-webkit-calendar-picker-indicator:hover { background-color: rgb(31 200 255 / 0.14); }
 .field { display: flex; flex-direction: column; gap: 4px; }
 .field-label { font-size: var(--t-small); color: var(--text-2); }
 .field-error { font-size: var(--t-small); color: var(--critical); }
@@ -819,3 +822,12 @@ tr.clickable.on td { background: var(--accent-tint); }
 .sit-card .brief1 { color: var(--text-1); }
 .sit-state.dim { color: var(--text-3); }
 @media (max-width: 1100px) { .assess-grid { grid-template-columns: 1fr; } }
+/* D63: Planner items open and close; the summary line shows the planner's answer while closed */
+.tk-top.click { cursor: pointer; }
+.tk-top.click:hover { background: var(--surface-2); }
+.tk-top.click:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.tk .prob small.sum { color: var(--text-2); margin-top: 2px; }
+.tk-right { display: inline-flex; align-items: center; gap: 8px; }
+.tk .chev { color: var(--text-3); font-size: 12px; width: 12px; text-align: center; }
+.tk-bulk { display: flex; justify-content: space-between; align-items: center; gap: var(--s3); margin: 0 0 var(--s2); font-size: 12px; flex-wrap: wrap; }
+.opt-row .chip { margin-left: 6px; }

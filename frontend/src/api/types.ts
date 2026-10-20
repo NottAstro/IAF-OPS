@@ -291,7 +291,7 @@ export type ImpactStatus = "in" | "proposed" | "apply" | "uncovered" | "waiting"
 export interface Impact { sev: "c" | "w" | "y" | "n"; what: string; sub: string; rec: string; alts: string[]; when: When | null;
   status: ImpactStatus; mission?: string; priority?: Priority; mission_id?: number; fix?: Fix | null }
 export interface Requirement { label: string; need: string; from: string; have: string; when: When | null;
-  status: "met" | "approve" | "wait"; q: [number, number] | null; scenario?: string; run_id?: number }
+  status: "met" | "approve" | "wait" | "short"; q: [number, number] | null; scenario?: string; run_id?: number }
 export interface ScenarioResponse {
   run: { id: number; name: string; code: string | null; category: ScenarioCategory | null; intensity: Intensity | null;
     status: "RUNNING" | "ENDED"; started_sim: string; elapsed_min: number };
@@ -305,7 +305,9 @@ export interface ScenarioResponse {
 export interface BaseRef { id: number; code: string; name: string }
 export interface TransferMove { key: string; kind: "FUEL" | "STOCK"; category: string; label: string; qty: number; unit: string;
   from_base: BaseRef; to_base: BaseRef; distance_km: number; depart_ts: string; eta: string; needed_by: string | null; late: boolean;
-  reason: string }
+  reason: string; alternatives?: DonorOption[] }
+/** D63: another base that could send the same stock instead. */
+export interface DonorOption { from_base: BaseRef; distance_km: number; eta: string; late: boolean; spare: number }
 export interface TransferUnmet { kind: "FUEL" | "STOCK"; category: string; label: string; qty: number; unit: string; to_base: BaseRef; reason: string }
 export interface TransferRow { id: number; kind: "FUEL" | "STOCK"; category: string; label: string; qty: number; unit: string;
   status: "IN_TRANSIT" | "DELIVERED" | "CANCELLED"; eta: string; distance_km: number; reason: string | null;
@@ -333,8 +335,9 @@ export interface MissionOptions {
   plan_id: number;
   mission: { id: number; code: string; name: string; priority: Priority; window_start: string; window_end: string; required: number; on_station_min: number };
   current: { item_id: number; base_id: number; type_id: number; launch: string } | null;
-  alternatives: { base: string; type: string; launch: string; cost_delta: number; why_not: string; base_id: number; type_id: number;
-    n?: number; base_name?: string; transit_min?: number; d_transit_min?: number; d_fuel_l?: number; risk?: number }[];
+  alternatives: { base: string; type: string; launch: string; cost_delta: number | null; why_not: string; base_id: number; type_id: number;
+    n?: number; base_name?: string; transit_min?: number; d_transit_min?: number | null; d_fuel_l?: number | null; risk?: number;
+    on_station?: string; recovery?: string; fits?: boolean; tanker?: boolean; night?: boolean; waves?: number; fuel_l?: number }[];
   manual: { base_id: number; base: string; base_name: string; type_id: number; type: string; aircraft: number }[];
 }
 export interface Situation {
@@ -346,6 +349,6 @@ export interface Situation {
   decision: { plan_id: number; kind: "PLAN" | "RETASK"; summary: string | null; also: string[] } | null;
   run: ScenarioResponse["run"] | null; lead: string | null; timeline: ScenarioResponse["timeline"]; state: "live" | "decision" | "ended";
   missions: SituationMission[]; routine_unchanged: number; impacts: (Impact & { scenario?: string })[]; need: number;
-  requirements: Requirement[]; counts: { met: number; approve: number; wait: number };
+  requirements: Requirement[]; counts: { met: number; approve: number; wait: number; short?: number };
   transfers: { moves: TransferMove[]; unmet: TransferUnmet[]; in_transit: TransferRow[] };
 }
