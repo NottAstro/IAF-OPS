@@ -83,7 +83,7 @@ function Brand() {
   return (
     <span className="brand">
       <img src="/iaf-crest.svg" alt="" />
-      <span>Air Operations Picture</span>
+      <span>Air Operations</span>
     </span>
   );
 }
@@ -158,7 +158,7 @@ function Login() {
     <div className="login">
       <form className="login-box" onSubmit={submit}>
         <img className="login-crest" src="/iaf-crest.svg" alt="Indian Air Force crest" />
-        <div className="login-title">Air Operations Picture</div>
+        <div className="login-title">Air Operations</div>
         <div className="login-sub">Inventory and common operating picture · SIH26250</div>
         <label className="field"><span className="field-label">Username</span>
           <input className="input" autoFocus autoComplete="username" value={u} onChange={(e) => setU(e.target.value)} /></label>

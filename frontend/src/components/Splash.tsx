@@ -20,8 +20,8 @@ export function Splash() {
       <div className="shutter shutter-r" />
       <div className="splash-core">
         <div className="crest-ring"><img src="/iaf-crest.svg" alt="Indian Air Force crest" /></div>
-        <div className="splash-title">AIR OPERATIONS PICTURE</div>
-        <div className="splash-sub">SIH26250 · PHASE 1 PROTOTYPE</div>
+        <div className="splash-title">AIR OPERATIONS</div>
+        <div className="splash-sub">SIH26250</div>
         <div className="splash-bar" />
       </div>
     </div>
